@@ -77,6 +77,7 @@ impl App {
             }
 
             if self.should_quit {
+                events.stop();
                 break;
             }
         }
@@ -161,6 +162,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('a')) => Action::SelectAll,
             (KeyModifiers::NONE, KeyCode::Char('*')) => Action::InvertSelection,
+            (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
             (KeyModifiers::NONE, KeyCode::F(5)) => Action::CopySelected,
             (KeyModifiers::NONE, KeyCode::F(6)) => Action::MoveSelected,
@@ -340,11 +342,37 @@ impl App {
             Action::OperationProgress { .. } => {
                 // Could update a progress indicator in the future
             }
+            Action::ShowHelp => {
+                self.dialog = Some(Dialog::info(
+                    "Shortcuts:\n\
+                     Up/Down - navigate\n\
+                     Home/End - top/bottom\n\
+                     PgUp/PgDn - page scroll\n\
+                     Enter - open dir/file\n\
+                     Backspace - parent dir\n\
+                     Tab - switch pane\n\
+                     Space/Insert - toggle select\n\
+                     Ctrl+A - select all\n\
+                     * - invert selection\n\
+                     F1 - this help\n\
+                     F2 - rename\n\
+                     F5 - copy to other pane\n\
+                     F6 - move to other pane\n\
+                     F7 - create directory\n\
+                     F8/Del - delete\n\
+                     Ctrl+F - quick filter\n\
+                     Ctrl+H - toggle hidden\n\
+                     Ctrl+R - refresh\n\
+                     q/Ctrl+Q - quit",
+                ));
+            }
             Action::Error(msg) => {
                 self.dialog = Some(Dialog::error(msg));
             }
             other => {
-                self.dual_pane.handle_action(&other);
+                if let Some(follow_up) = self.dual_pane.handle_action(&other) {
+                    self.dispatch(follow_up);
+                }
             }
         }
     }

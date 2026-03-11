@@ -9,6 +9,8 @@ use crate::app::InputMode;
 pub fn draw_command_bar(frame: &mut Frame, area: Rect, input_mode: &InputMode) {
     let line = match input_mode {
         InputMode::Normal => Line::from(vec![
+            Span::styled("F1", Style::default().fg(Color::Black).bg(Color::Cyan)),
+            Span::raw("Help "),
             Span::styled("F2", Style::default().fg(Color::Black).bg(Color::Cyan)),
             Span::raw("Ren "),
             Span::styled("F5", Style::default().fg(Color::Black).bg(Color::Cyan)),
