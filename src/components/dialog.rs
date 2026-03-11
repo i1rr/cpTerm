@@ -10,6 +10,10 @@ pub enum DialogKind {
         title: String,
         message: String,
     },
+    Conflict {
+        title: String,
+        message: String,
+    },
     Error(String),
     Info(String),
 }
@@ -24,6 +28,16 @@ impl Dialog {
     pub fn confirm(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             kind: DialogKind::Confirm {
+                title: title.into(),
+                message: message.into(),
+            },
+            scroll: 0,
+        }
+    }
+
+    pub fn conflict(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind: DialogKind::Conflict {
                 title: title.into(),
                 message: message.into(),
             },
@@ -63,6 +77,13 @@ impl Dialog {
                 let text = format!("{}\n\nEnter: Confirm  Esc: Cancel", message);
                 (text, block)
             }
+            DialogKind::Conflict { title, message } => {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightRed))
+                    .title(Line::from(format!(" {} - Conflict ", title)));
+                (message.clone(), block)
+            }
             DialogKind::Error(msg) => {
                 let block = Block::default()
                     .borders(Borders::ALL)
@@ -96,6 +117,7 @@ impl Dialog {
 
         let style = match &self.kind {
             DialogKind::Confirm { .. } => Style::default().fg(Color::White),
+            DialogKind::Conflict { .. } => Style::default().fg(Color::LightRed),
             DialogKind::Error(_) => Style::default()
                 .fg(Color::Red)
                 .add_modifier(Modifier::BOLD),

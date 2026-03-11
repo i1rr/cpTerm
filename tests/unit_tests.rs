@@ -234,7 +234,7 @@ async fn copy_entries_copies_files() {
     let sources = vec![src_dir.join("file1.txt"), src_dir.join("file2.txt")];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::copy_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::copy_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     // Drain messages
     let mut messages = Vec::new();
@@ -261,7 +261,7 @@ async fn copy_entries_copies_directory_recursively() {
     let sources = vec![sub.clone()];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::copy_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::copy_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     while let Ok(_) = rx.try_recv() {}
 
@@ -281,7 +281,7 @@ async fn move_entries_moves_files() {
     let sources = vec![src_dir.join("moveme.txt")];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::move_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::move_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     while let Ok(_) = rx.try_recv() {}
 
@@ -335,7 +335,7 @@ async fn copy_nonexistent_source_reports_error() {
     let sources = vec![PathBuf::from("/no_such_file_xyz_123")];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::copy_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::copy_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     let mut found_error = false;
     while let Ok(msg) = rx.try_recv() {
@@ -894,7 +894,7 @@ async fn move_entries_moves_directory() {
     let sources = vec![sub.clone()];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::move_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::move_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     while let Ok(_) = rx.try_recv() {}
 
@@ -917,7 +917,7 @@ async fn move_nonexistent_source_reports_error() {
     let sources = vec![PathBuf::from("/no_such_file_move_xyz")];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::move_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::move_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     let mut found_error = false;
     while let Ok(msg) = rx.try_recv() {
@@ -958,7 +958,7 @@ async fn copy_entries_sends_progress_and_complete() {
     let sources = vec![src_dir.join("a.txt"), src_dir.join("b.txt")];
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    cpt::fs::ops::copy_entries(sources, dst_dir.clone(), tx).await;
+    cpt::fs::ops::copy_entries(cpt::fs::ops::build_pairs(&sources, &dst_dir), tx).await;
 
     let mut progress_count = 0;
     let mut complete = false;
@@ -1088,6 +1088,137 @@ fn read_directory_includes_hidden_files() {
     assert!(names.contains(&"visible.txt"));
 
     fs::remove_dir_all(&dir).ok();
+}
+
+// ── Conflict detection and unique naming ─────────────────────
+
+#[test]
+fn build_pairs_creates_correct_targets() {
+    let dest = PathBuf::from("/dest");
+    let sources = vec![PathBuf::from("/src/a.txt"), PathBuf::from("/src/b.txt")];
+    let pairs = cpt::fs::ops::build_pairs(&sources, &dest);
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(pairs[0], (PathBuf::from("/src/a.txt"), PathBuf::from("/dest/a.txt")));
+    assert_eq!(pairs[1], (PathBuf::from("/src/b.txt"), PathBuf::from("/dest/b.txt")));
+}
+
+#[test]
+fn find_conflicts_detects_existing_targets() {
+    let dir = tempdir("conflicts_detect");
+    fs::write(dir.join("existing.txt"), "data").unwrap();
+
+    let pairs = vec![
+        (PathBuf::from("/src/existing.txt"), dir.join("existing.txt")),
+        (PathBuf::from("/src/new.txt"), dir.join("new.txt")),
+    ];
+    let conflicts = cpt::fs::ops::find_conflicts(&pairs);
+    assert_eq!(conflicts, vec![0]);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn find_conflicts_empty_when_no_conflicts() {
+    let dir = tempdir("no_conflicts");
+    let pairs = vec![
+        (PathBuf::from("/src/a.txt"), dir.join("a.txt")),
+        (PathBuf::from("/src/b.txt"), dir.join("b.txt")),
+    ];
+    let conflicts = cpt::fs::ops::find_conflicts(&pairs);
+    assert!(conflicts.is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn unique_target_appends_number() {
+    let dir = tempdir("unique_target");
+    fs::write(dir.join("file.txt"), "").unwrap();
+
+    let result = cpt::fs::ops::unique_target(&dir.join("file.txt"));
+    assert_eq!(result, dir.join("file (1).txt"));
+
+    // Create that too, should get (2)
+    fs::write(dir.join("file (1).txt"), "").unwrap();
+    let result = cpt::fs::ops::unique_target(&dir.join("file.txt"));
+    assert_eq!(result, dir.join("file (2).txt"));
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn unique_target_no_extension() {
+    let dir = tempdir("unique_noext");
+    fs::write(dir.join("readme"), "").unwrap();
+
+    let result = cpt::fs::ops::unique_target(&dir.join("readme"));
+    assert_eq!(result, dir.join("readme (1)"));
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn rename_conflicts_renames_only_existing() {
+    let dir = tempdir("rename_conflicts");
+    fs::write(dir.join("exists.txt"), "").unwrap();
+
+    let mut pairs = vec![
+        (PathBuf::from("/src/exists.txt"), dir.join("exists.txt")),
+        (PathBuf::from("/src/new.txt"), dir.join("new.txt")),
+    ];
+    cpt::fs::ops::rename_conflicts(&mut pairs);
+
+    assert_eq!(pairs[0].1, dir.join("exists (1).txt"));
+    assert_eq!(pairs[1].1, dir.join("new.txt")); // Unchanged
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn copy_with_rename_avoids_overwrite() {
+    let src_dir = tempdir("copy_rename_src");
+    let dst_dir = tempdir("copy_rename_dst");
+    fs::write(src_dir.join("file.txt"), "new content").unwrap();
+    fs::write(dst_dir.join("file.txt"), "original").unwrap();
+
+    let sources = vec![src_dir.join("file.txt")];
+    let mut pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
+    cpt::fs::ops::rename_conflicts(&mut pairs);
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    cpt::fs::ops::copy_entries(pairs, tx).await;
+    while let Ok(_) = rx.try_recv() {}
+
+    // Original preserved
+    assert_eq!(fs::read_to_string(dst_dir.join("file.txt")).unwrap(), "original");
+    // New file renamed
+    assert_eq!(
+        fs::read_to_string(dst_dir.join("file (1).txt")).unwrap(),
+        "new content"
+    );
+
+    fs::remove_dir_all(&src_dir).ok();
+    fs::remove_dir_all(&dst_dir).ok();
+}
+
+#[tokio::test]
+async fn copy_overwrite_replaces_existing() {
+    let src_dir = tempdir("copy_overwrite_src");
+    let dst_dir = tempdir("copy_overwrite_dst");
+    fs::write(src_dir.join("file.txt"), "updated").unwrap();
+    fs::write(dst_dir.join("file.txt"), "old").unwrap();
+
+    let sources = vec![src_dir.join("file.txt")];
+    let pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
+    // No rename - overwrite
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    cpt::fs::ops::copy_entries(pairs, tx).await;
+    while let Ok(_) = rx.try_recv() {}
+
+    assert_eq!(fs::read_to_string(dst_dir.join("file.txt")).unwrap(), "updated");
+
+    fs::remove_dir_all(&src_dir).ok();
+    fs::remove_dir_all(&dst_dir).ok();
 }
 
 // ── Helpers ──────────────────────────────────────────────────

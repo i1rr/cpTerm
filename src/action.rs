@@ -30,7 +30,10 @@ pub enum Action {
     OpenFile,
     Rename,
     MkDir,
+    CreateFile,
     Refresh,
+    ConflictOverwrite,
+    ConflictRename,
     // Filter
     StartFilter,
     FilterInput(char),

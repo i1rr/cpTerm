@@ -4,22 +4,70 @@ use tokio::sync::mpsc;
 
 use crate::action::Action;
 
-/// Copy a list of files/dirs to a destination directory.
-/// Sends progress and completion/error actions through the channel.
+/// Build (source, target) pairs for a copy/move into dest_dir.
+pub fn build_pairs(sources: &[PathBuf], dest_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+    sources
+        .iter()
+        .map(|s| {
+            let target = dest_dir.join(s.file_name().unwrap_or_default());
+            (s.clone(), target)
+        })
+        .collect()
+}
+
+/// Find which targets already exist.
+pub fn find_conflicts(pairs: &[(PathBuf, PathBuf)]) -> Vec<usize> {
+    pairs
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, target))| target.exists())
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Generate a unique target name by appending (1), (2), etc.
+pub fn unique_target(target: &Path) -> PathBuf {
+    let stem = target
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let ext = target
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let parent = target.parent().unwrap_or(Path::new("."));
+
+    for i in 1.. {
+        let candidate = parent.join(format!("{} ({}){}", stem, i, ext));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Rename conflicting targets to unique names.
+pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
+    for (_, target) in pairs.iter_mut() {
+        if target.exists() {
+            *target = unique_target(target);
+        }
+    }
+}
+
+/// Copy a list of (source, target) pairs.
 pub async fn copy_entries(
-    sources: Vec<PathBuf>,
-    dest_dir: PathBuf,
+    pairs: Vec<(PathBuf, PathBuf)>,
     tx: mpsc::UnboundedSender<Action>,
 ) {
-    let total = sources.len() as u64;
+    let total = pairs.len() as u64;
     let mut done = 0u64;
 
-    for src in &sources {
-        let target = dest_dir.join(src.file_name().unwrap_or_default());
+    for (src, target) in &pairs {
         let result = if src.is_dir() {
-            copy_dir_recursive(src, &target)
+            copy_dir_recursive(src, target)
         } else {
-            std::fs::copy(src, &target).map(|_| ())
+            std::fs::copy(src, target).map(|_| ())
         };
 
         match result {
@@ -44,24 +92,22 @@ pub async fn copy_entries(
     )));
 }
 
-/// Move a list of files/dirs to a destination directory.
+/// Move a list of (source, target) pairs.
 pub async fn move_entries(
-    sources: Vec<PathBuf>,
-    dest_dir: PathBuf,
+    pairs: Vec<(PathBuf, PathBuf)>,
     tx: mpsc::UnboundedSender<Action>,
 ) {
-    let total = sources.len() as u64;
+    let total = pairs.len() as u64;
     let mut done = 0u64;
 
-    for src in &sources {
-        let target = dest_dir.join(src.file_name().unwrap_or_default());
-        let result = std::fs::rename(src, &target).or_else(|_| {
+    for (src, target) in &pairs {
+        let result = std::fs::rename(src, target).or_else(|_| {
             // rename fails across drives, fall back to copy+delete
             if src.is_dir() {
-                copy_dir_recursive(src, &target)?;
+                copy_dir_recursive(src, target)?;
                 std::fs::remove_dir_all(src)
             } else {
-                std::fs::copy(src, &target)?;
+                std::fs::copy(src, target)?;
                 std::fs::remove_file(src)
             }
         });

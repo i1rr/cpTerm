@@ -22,12 +22,17 @@ pub enum InputMode {
     Filter(String),
     Rename(String),
     MkDir(String),
+    CreateFile(String),
     Command(String),
 }
 
 enum PendingOp {
-    Copy(Vec<PathBuf>, PathBuf),
-    Move(Vec<PathBuf>, PathBuf),
+    Copy {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
+    Move {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
     Delete(Vec<PathBuf>),
 }
 
@@ -123,6 +128,8 @@ impl App {
                 KeyCode::Esc => Action::DismissDialog,
                 KeyCode::Up => Action::DialogScrollUp,
                 KeyCode::Down => Action::DialogScrollDown,
+                KeyCode::Char('o') | KeyCode::Char('O') => Action::ConflictOverwrite,
+                KeyCode::Char('r') | KeyCode::Char('R') => Action::ConflictRename,
                 _ => Action::Noop,
             };
         }
@@ -138,7 +145,7 @@ impl App {
                     _ => Action::Noop,
                 };
             }
-            InputMode::Rename(_) | InputMode::MkDir(_) => {
+            InputMode::Rename(_) | InputMode::MkDir(_) | InputMode::CreateFile(_) => {
                 return match key.code {
                     KeyCode::Char(c) => Action::InputChar(c),
                     KeyCode::Backspace => Action::InputBackspace,
@@ -176,6 +183,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('a')) => Action::SelectAll,
             (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
+            (KeyModifiers::NONE, KeyCode::F(4)) => Action::CreateFile,
             (KeyModifiers::NONE, KeyCode::F(5)) => Action::CopySelected,
             (KeyModifiers::NONE, KeyCode::F(6)) => Action::MoveSelected,
             (KeyModifiers::NONE, KeyCode::F(7)) => Action::MkDir,
@@ -216,20 +224,32 @@ impl App {
             }
             Action::ConfirmDialog => {
                 if let Some(op) = self.pending_op.take() {
-                    let tx = self.action_tx.clone();
-                    match op {
-                        PendingOp::Copy(sources, dest) => {
-                            tokio::spawn(ops::copy_entries(sources, dest, tx));
-                        }
-                        PendingOp::Move(sources, dest) => {
-                            tokio::spawn(ops::move_entries(sources, dest, tx));
-                        }
-                        PendingOp::Delete(sources) => {
-                            tokio::spawn(ops::delete_entries(sources, tx));
-                        }
-                    }
+                    self.execute_op(op);
                 }
                 self.dialog = None;
+            }
+            Action::ConflictOverwrite => {
+                if let Some(op) = self.pending_op.take() {
+                    self.execute_op(op);
+                    self.dialog = None;
+                }
+            }
+            Action::ConflictRename => {
+                if let Some(op) = self.pending_op.take() {
+                    let op = match op {
+                        PendingOp::Copy { mut pairs } => {
+                            ops::rename_conflicts(&mut pairs);
+                            PendingOp::Copy { pairs }
+                        }
+                        PendingOp::Move { mut pairs } => {
+                            ops::rename_conflicts(&mut pairs);
+                            PendingOp::Move { pairs }
+                        }
+                        other => other,
+                    };
+                    self.execute_op(op);
+                    self.dialog = None;
+                }
             }
             Action::CopySelected => {
                 let sources = self.get_operation_sources();
@@ -237,16 +257,27 @@ impl App {
                     return;
                 }
                 let dest = self.dual_pane.inactive_dir();
-                let count = sources.len();
-                self.pending_op = Some(PendingOp::Copy(sources, dest.clone()));
-                self.dialog = Some(Dialog::confirm(
-                    "Copy",
-                    format!(
-                        "Copy {} item(s) to {}?",
-                        count,
-                        dest.display()
-                    ),
-                ));
+                let pairs = ops::build_pairs(&sources, &dest);
+                let conflicts = ops::find_conflicts(&pairs);
+                let count = pairs.len();
+                self.pending_op = Some(PendingOp::Copy { pairs });
+                if conflicts.is_empty() {
+                    self.dialog = Some(Dialog::confirm(
+                        "Copy",
+                        format!("Copy {} item(s) to {}?", count, dest.display()),
+                    ));
+                } else {
+                    self.dialog = Some(Dialog::conflict(
+                        "Copy",
+                        format!(
+                            "{} of {} item(s) already exist in {}\n\n\
+                             (O)verwrite  (R)ename  Esc: Cancel",
+                            conflicts.len(),
+                            count,
+                            dest.display()
+                        ),
+                    ));
+                }
             }
             Action::MoveSelected => {
                 let sources = self.get_operation_sources();
@@ -254,16 +285,27 @@ impl App {
                     return;
                 }
                 let dest = self.dual_pane.inactive_dir();
-                let count = sources.len();
-                self.pending_op = Some(PendingOp::Move(sources, dest.clone()));
-                self.dialog = Some(Dialog::confirm(
-                    "Move",
-                    format!(
-                        "Move {} item(s) to {}?",
-                        count,
-                        dest.display()
-                    ),
-                ));
+                let pairs = ops::build_pairs(&sources, &dest);
+                let conflicts = ops::find_conflicts(&pairs);
+                let count = pairs.len();
+                self.pending_op = Some(PendingOp::Move { pairs });
+                if conflicts.is_empty() {
+                    self.dialog = Some(Dialog::confirm(
+                        "Move",
+                        format!("Move {} item(s) to {}?", count, dest.display()),
+                    ));
+                } else {
+                    self.dialog = Some(Dialog::conflict(
+                        "Move",
+                        format!(
+                            "{} of {} item(s) already exist in {}\n\n\
+                             (O)verwrite  (R)ename  Esc: Cancel",
+                            conflicts.len(),
+                            count,
+                            dest.display()
+                        ),
+                    ));
+                }
             }
             Action::DeleteSelected => {
                 let sources = self.get_operation_sources();
@@ -293,6 +335,9 @@ impl App {
             }
             Action::MkDir => {
                 self.input_mode = InputMode::MkDir(String::new());
+            }
+            Action::CreateFile => {
+                self.input_mode = InputMode::CreateFile(String::new());
             }
             Action::StartFilter => {
                 self.input_mode = InputMode::Filter(String::new());
@@ -328,6 +373,7 @@ impl App {
             Action::InputChar(ch) => match self.input_mode {
                 InputMode::Rename(ref mut text)
                 | InputMode::MkDir(ref mut text)
+                | InputMode::CreateFile(ref mut text)
                 | InputMode::Command(ref mut text) => {
                     text.push(ch);
                 }
@@ -336,6 +382,7 @@ impl App {
             Action::InputBackspace => match self.input_mode {
                 InputMode::Rename(ref mut text)
                 | InputMode::MkDir(ref mut text)
+                | InputMode::CreateFile(ref mut text)
                 | InputMode::Command(ref mut text) => {
                     text.pop();
                 }
@@ -348,6 +395,9 @@ impl App {
                     }
                     InputMode::MkDir(name) => {
                         self.do_mkdir(&name);
+                    }
+                    InputMode::CreateFile(name) => {
+                        self.do_create_file(&name);
                     }
                     InputMode::Command(cmd) => {
                         self.do_command(&cmd);
@@ -388,6 +438,7 @@ impl App {
                      Ctrl+A - select/deselect all\n\
                      F1 - this help\n\
                      F2 - rename\n\
+                     F4 - create file\n\
                      F5 - copy to other pane\n\
                      F6 - move to other pane\n\
                      F7 - create directory\n\
@@ -404,6 +455,21 @@ impl App {
                 if let Some(follow_up) = self.dual_pane.handle_action(&other) {
                     self.dispatch(follow_up);
                 }
+            }
+        }
+    }
+
+    fn execute_op(&self, op: PendingOp) {
+        let tx = self.action_tx.clone();
+        match op {
+            PendingOp::Copy { pairs } => {
+                tokio::spawn(ops::copy_entries(pairs, tx));
+            }
+            PendingOp::Move { pairs } => {
+                tokio::spawn(ops::move_entries(pairs, tx));
+            }
+            PendingOp::Delete(sources) => {
+                tokio::spawn(ops::delete_entries(sources, tx));
             }
         }
     }
@@ -446,6 +512,20 @@ impl App {
         let new_dir = dir.join(name);
         if let Err(e) = std::fs::create_dir(&new_dir) {
             self.dialog = Some(Dialog::error(format!("Mkdir failed: {}", e)));
+        }
+        self.dual_pane.active_explorer_mut().refresh();
+    }
+
+    fn do_create_file(&mut self, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        let dir = self.dual_pane.active_explorer().current_dir.clone();
+        let new_file = dir.join(name);
+        if new_file.exists() {
+            self.dialog = Some(Dialog::error(format!("Already exists: {}", name)));
+        } else if let Err(e) = std::fs::File::create(&new_file) {
+            self.dialog = Some(Dialog::error(format!("Create file failed: {}", e)));
         }
         self.dual_pane.active_explorer_mut().refresh();
     }

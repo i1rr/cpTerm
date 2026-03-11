@@ -13,6 +13,8 @@ pub fn draw_command_bar(frame: &mut Frame, area: Rect, input_mode: &InputMode) {
             Span::raw("Help "),
             Span::styled("F2", Style::default().fg(Color::Black).bg(Color::Cyan)),
             Span::raw("Ren "),
+            Span::styled("F4", Style::default().fg(Color::Black).bg(Color::Cyan)),
+            Span::raw("New "),
             Span::styled("F5", Style::default().fg(Color::Black).bg(Color::Cyan)),
             Span::raw("Copy "),
             Span::styled("F6", Style::default().fg(Color::Black).bg(Color::Cyan)),
@@ -42,6 +44,12 @@ pub fn draw_command_bar(frame: &mut Frame, area: Rect, input_mode: &InputMode) {
         ]),
         InputMode::MkDir(text) => Line::from(vec![
             Span::styled("New directory: ", Style::default().fg(Color::Yellow)),
+            Span::raw(text.as_str()),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+            Span::raw("  (Enter to confirm, Esc to cancel)"),
+        ]),
+        InputMode::CreateFile(text) => Line::from(vec![
+            Span::styled("New file: ", Style::default().fg(Color::Yellow)),
             Span::raw(text.as_str()),
             Span::styled("_", Style::default().fg(Color::Yellow)),
             Span::raw("  (Enter to confirm, Esc to cancel)"),
