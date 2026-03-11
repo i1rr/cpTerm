@@ -21,6 +21,7 @@ pub enum InputMode {
     Filter(String),
     Rename(String),
     MkDir(String),
+    Command(String),
 }
 
 enum PendingOp {
@@ -97,7 +98,7 @@ impl App {
             .split(frame.area());
 
         self.dual_pane.draw(frame, chunks[0]);
-        draw_status_bar(frame, chunks[1], &self.dual_pane);
+        draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode);
         draw_command_bar(frame, chunks[2], &self.input_mode);
 
         if let Some(ref dialog) = self.dialog {
@@ -145,6 +146,15 @@ impl App {
                     _ => Action::Noop,
                 };
             }
+            InputMode::Command(_) => {
+                return match key.code {
+                    KeyCode::Char(c) => Action::InputChar(c),
+                    KeyCode::Backspace => Action::InputBackspace,
+                    KeyCode::Enter => Action::InputConfirm,
+                    KeyCode::Esc => Action::InputCancel,
+                    _ => Action::Noop,
+                };
+            }
             InputMode::Normal => {}
         }
 
@@ -176,6 +186,8 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
             (KeyModifiers::NONE, KeyCode::Esc) => Action::FilterCancel,
+            (KeyModifiers::NONE, KeyCode::Char(c)) => Action::StartCommand(c),
+            (KeyModifiers::SHIFT, KeyCode::Char(c)) => Action::StartCommand(c),
             _ => Action::Noop,
         }
     }
@@ -313,13 +325,17 @@ impl App {
                     .handle_action(&Action::FilterCancel);
             }
             Action::InputChar(ch) => match self.input_mode {
-                InputMode::Rename(ref mut text) | InputMode::MkDir(ref mut text) => {
+                InputMode::Rename(ref mut text)
+                | InputMode::MkDir(ref mut text)
+                | InputMode::Command(ref mut text) => {
                     text.push(ch);
                 }
                 _ => {}
             },
             Action::InputBackspace => match self.input_mode {
-                InputMode::Rename(ref mut text) | InputMode::MkDir(ref mut text) => {
+                InputMode::Rename(ref mut text)
+                | InputMode::MkDir(ref mut text)
+                | InputMode::Command(ref mut text) => {
                     text.pop();
                 }
                 _ => {}
@@ -332,9 +348,15 @@ impl App {
                     InputMode::MkDir(name) => {
                         self.do_mkdir(&name);
                     }
+                    InputMode::Command(cmd) => {
+                        self.do_command(&cmd);
+                    }
                     _ => {}
                 }
                 self.input_mode = InputMode::Normal;
+            }
+            Action::StartCommand(ch) => {
+                self.input_mode = InputMode::Command(String::from(ch));
             }
             Action::InputCancel => {
                 self.input_mode = InputMode::Normal;
@@ -425,6 +447,90 @@ impl App {
             self.dialog = Some(Dialog::error(format!("Mkdir failed: {}", e)));
         }
         self.dual_pane.active_explorer_mut().refresh();
+    }
+
+    fn do_command(&mut self, cmd: &str) {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            return;
+        }
+
+        // Parse "cd <path>" commands
+        if let Some(path_str) = cmd.strip_prefix("cd ").or_else(|| {
+            if cmd == "cd" {
+                Some("~")
+            } else {
+                None
+            }
+        }) {
+            let path_str = path_str.trim();
+            let path_str = if path_str == "~" {
+                std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .unwrap_or_else(|_| ".".to_string())
+            } else {
+                path_str.to_string()
+            };
+
+            let target = if PathBuf::from(&path_str).is_absolute() {
+                PathBuf::from(&path_str)
+            } else {
+                self.dual_pane.active_explorer().current_dir.join(&path_str)
+            };
+
+            match std::fs::canonicalize(&target) {
+                Ok(resolved) if resolved.is_dir() => {
+                    let explorer = self.dual_pane.active_explorer_mut();
+                    explorer.current_dir = resolved;
+                    explorer.filter_text = None;
+                    explorer.cursor = 0;
+                    explorer.refresh();
+                }
+                Ok(_) => {
+                    self.dialog = Some(Dialog::error(format!("Not a directory: {}", target.display())));
+                }
+                Err(e) => {
+                    self.dialog = Some(Dialog::error(format!("cd: {}", e)));
+                }
+            }
+            return;
+        }
+
+        // Run as shell command
+        let cwd = self.dual_pane.active_explorer().current_dir.clone();
+        let shell = if cfg!(windows) { "cmd" } else { "sh" };
+        let flag = if cfg!(windows) { "/C" } else { "-c" };
+
+        match std::process::Command::new(shell)
+            .arg(flag)
+            .arg(cmd)
+            .current_dir(&cwd)
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let mut result = String::new();
+                if !stdout.is_empty() {
+                    result.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    if !result.is_empty() {
+                        result.push('\n');
+                    }
+                    result.push_str(&stderr);
+                }
+                if result.is_empty() {
+                    result = format!("Command completed (exit code: {})", output.status.code().unwrap_or(-1));
+                }
+                self.dialog = Some(Dialog::info(result));
+                self.dual_pane.left.refresh();
+                self.dual_pane.right.refresh();
+            }
+            Err(e) => {
+                self.dialog = Some(Dialog::error(format!("Failed to run command: {}", e)));
+            }
+        }
     }
 
     fn save_session(&self) {

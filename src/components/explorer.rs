@@ -329,6 +329,9 @@ impl Explorer {
             if entry.is_dir {
                 style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
             }
+            if entry.is_hidden {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
             if is_selected {
                 style = style.bg(Color::Yellow).fg(Color::Black);
             }

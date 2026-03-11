@@ -46,6 +46,14 @@ pub fn draw_command_bar(frame: &mut Frame, area: Rect, input_mode: &InputMode) {
             Span::styled("_", Style::default().fg(Color::Yellow)),
             Span::raw("  (Enter to confirm, Esc to cancel)"),
         ]),
+        InputMode::Command(_) => Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
+            Span::raw(":Run  "),
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
+            Span::raw(":Cancel  "),
+            Span::styled("cd <path>", Style::default().fg(Color::DarkGray)),
+            Span::raw(" to navigate, or any shell command"),
+        ]),
     };
 
     let paragraph =

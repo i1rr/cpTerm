@@ -53,6 +53,7 @@ pub enum Action {
     InputBackspace,
     InputConfirm,
     InputCancel,
+    StartCommand(char),
     Error(String),
     Noop,
 }
