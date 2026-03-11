@@ -1,5 +1,6 @@
 mod action;
 mod app;
+mod bookmarks;
 mod cli;
 mod components;
 mod config;

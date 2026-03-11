@@ -6,6 +6,8 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
+use crate::bookmarks::BookmarkList;
+use crate::components::bookmark_panel::BookmarkPanel;
 use crate::components::command_bar::draw_command_bar;
 use crate::components::dialog::Dialog;
 use crate::components::dual_pane::DualPane;
@@ -50,6 +52,8 @@ pub struct App {
     pub theme: Theme,
     pub theme_name: String,
     pub theme_editor: Option<ThemeEditor>,
+    pub bookmark_panel: Option<BookmarkPanel>,
+    pub bookmarks: BookmarkList,
     pub task: Option<TaskState>,
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
@@ -73,6 +77,8 @@ impl App {
             theme,
             theme_name,
             theme_editor: None,
+            bookmark_panel: None,
+            bookmarks: BookmarkList::load(),
             task: None,
             action_tx,
             action_rx,
@@ -125,6 +131,10 @@ impl App {
         draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
         draw_command_bar(frame, chunks[2], &self.input_mode, self.task.as_ref(), &self.theme);
 
+        if let Some(ref mut panel) = self.bookmark_panel {
+            panel.draw(frame, frame.area(), &self.bookmarks, &self.theme);
+        }
+
         if let Some(ref mut editor) = self.theme_editor {
             editor.draw(frame, frame.area(), &self.theme, &self.theme_name);
         }
@@ -160,6 +170,11 @@ impl App {
                 KeyCode::Char('r') | KeyCode::Char('R') => Action::ConflictRename,
                 _ => Action::Noop,
             };
+        }
+
+        // Bookmark panel intercepts
+        if let Some(ref panel) = self.bookmark_panel {
+            return self.map_bookmark_panel_key(key, panel);
         }
 
         // Theme editor intercepts (with sub-states)
@@ -242,6 +257,7 @@ impl App {
             (KeyModifiers::NONE, KeyCode::F(8)) | (KeyModifiers::NONE, KeyCode::Delete) => {
                 Action::DeleteSelected
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('b')) => Action::OpenBookmarks,
             (KeyModifiers::CONTROL, KeyCode::Char('f')) => Action::StartFilter,
             (KeyModifiers::CONTROL, KeyCode::Char('t')) => Action::OpenThemeEditor,
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
@@ -297,6 +313,31 @@ impl App {
         }
     }
 
+    fn map_bookmark_panel_key(&self, key: KeyEvent, panel: &BookmarkPanel) -> Action {
+        // Naming sub-state: text input for bookmark name.
+        if panel.naming.is_some() {
+            return match key.code {
+                KeyCode::Char(c) => Action::InputChar(c),
+                KeyCode::Backspace => Action::InputBackspace,
+                KeyCode::Enter => Action::InputConfirm,
+                KeyCode::Esc => Action::InputCancel,
+                _ => Action::Noop,
+            };
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => Action::MoveUp,
+            (KeyModifiers::NONE, KeyCode::Down) => Action::MoveDown,
+            (KeyModifiers::NONE, KeyCode::Home) => Action::MoveToTop,
+            (KeyModifiers::NONE, KeyCode::End) => Action::MoveToBottom,
+            (KeyModifiers::NONE, KeyCode::Enter) => Action::BookmarkNavigate,
+            (KeyModifiers::CONTROL, KeyCode::Char('d')) => Action::BookmarkAdd,
+            (KeyModifiers::SHIFT, KeyCode::Delete) => Action::BookmarkRemove,
+            (KeyModifiers::NONE, KeyCode::Esc) => Action::BookmarkClose,
+            _ => Action::Noop,
+        }
+    }
+
     fn dispatch(&mut self, action: Action) {
         // Task stream actions are processed regardless of any modal state so that
         // background output keeps flowing while theme editor or dialogs are open.
@@ -322,6 +363,10 @@ impl App {
             return;
         }
 
+        if self.bookmark_panel.is_some() && self.dispatch_bookmark_panel(&action) {
+            return;
+        }
+
         if self.theme_editor.is_some() && self.dispatch_theme_editor(&action) {
             return;
         }
@@ -333,6 +378,9 @@ impl App {
             }
             Action::Noop | Action::Tick => {}
             Action::Resize(_, _) => {}
+            Action::OpenBookmarks => {
+                self.bookmark_panel = Some(BookmarkPanel::new(0));
+            }
             Action::OpenThemeEditor => {
                 self.theme_editor = Some(ThemeEditor::new());
             }
@@ -618,6 +666,7 @@ impl App {
                      F5 - copy to other pane\n\
                      F6 - move to other pane\n\
                      F8/Del - delete\n\
+                     Ctrl+B - bookmarks\n\
                      Ctrl+F - quick filter\n\
                      Ctrl+T - theme editor\n\
                      Ctrl+R - refresh\n\
@@ -629,6 +678,11 @@ impl App {
             Action::Error(msg) => {
                 self.dialog = Some(Dialog::error(msg));
             }
+            // Bookmark panel actions without panel open are no-ops
+            Action::BookmarkNavigate
+            | Action::BookmarkAdd
+            | Action::BookmarkRemove
+            | Action::BookmarkClose => {}
             // Theme editor actions without editor open are no-ops
             Action::ThemeEditorClose
             | Action::ThemeEditorCycleBase
@@ -644,6 +698,145 @@ impl App {
                     self.dispatch(follow_up);
                 }
             }
+        }
+    }
+
+    /// Handle actions when the bookmark panel is open.
+    /// Returns true if the action was consumed.
+    fn dispatch_bookmark_panel(&mut self, action: &Action) -> bool {
+        // Let dialog actions pass through so dialogs above the panel work.
+        if self.dialog.is_some() {
+            match action {
+                Action::DismissDialog
+                | Action::ConfirmDialog
+                | Action::DialogScrollUp
+                | Action::DialogScrollDown => return false,
+                _ => {}
+            }
+        }
+
+        // Naming sub-state: user is typing a name for a new bookmark.
+        if self.bookmark_panel.as_ref().unwrap().naming.is_some() {
+            return self.dispatch_bookmark_naming(action);
+        }
+
+        match action {
+            Action::MoveUp => {
+                self.bookmark_panel.as_mut().unwrap().move_up();
+                true
+            }
+            Action::MoveDown => {
+                let count = self.bookmarks.entries.len();
+                self.bookmark_panel.as_mut().unwrap().move_down(count);
+                true
+            }
+            Action::MoveToTop => {
+                self.bookmark_panel.as_mut().unwrap().cursor = 0;
+                true
+            }
+            Action::MoveToBottom => {
+                let count = self.bookmarks.entries.len();
+                if count > 0 {
+                    self.bookmark_panel.as_mut().unwrap().cursor = count - 1;
+                }
+                true
+            }
+            Action::BookmarkNavigate => {
+                let cursor = self.bookmark_panel.as_ref().unwrap().cursor;
+                if let Some(entry) = self.bookmarks.entries.get(cursor) {
+                    let path = entry.path.clone();
+                    if path.is_dir() {
+                        let explorer = self.dual_pane.active_explorer_mut();
+                        explorer.current_dir = path;
+                        explorer.filter_text = None;
+                        explorer.cursor = 0;
+                        explorer.refresh();
+                        self.bookmark_panel = None;
+                    } else {
+                        self.dialog = Some(Dialog::error(format!(
+                            "Path not found: {}",
+                            path.display()
+                        )));
+                    }
+                }
+                true
+            }
+            Action::BookmarkAdd => {
+                // Default name = folder name of active pane.
+                let dir = self.dual_pane.active_explorer().current_dir.clone();
+                let default_name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let panel = self.bookmark_panel.as_mut().unwrap();
+                panel.naming = Some(default_name);
+                true
+            }
+            Action::BookmarkRemove => {
+                let cursor = self.bookmark_panel.as_ref().unwrap().cursor;
+                self.bookmarks.remove(cursor);
+                let count = self.bookmarks.entries.len();
+                self.bookmark_panel.as_mut().unwrap().clamp_cursor(count);
+                true
+            }
+            Action::BookmarkClose => {
+                self.bookmark_panel = None;
+                true
+            }
+            Action::Quit | Action::Tick | Action::Resize(_, _) | Action::Noop => false,
+            _ => true,
+        }
+    }
+
+    fn dispatch_bookmark_naming(&mut self, action: &Action) -> bool {
+        match action {
+            Action::InputChar(c) => {
+                self.bookmark_panel
+                    .as_mut()
+                    .unwrap()
+                    .naming
+                    .as_mut()
+                    .unwrap()
+                    .push(*c);
+                true
+            }
+            Action::InputBackspace => {
+                self.bookmark_panel
+                    .as_mut()
+                    .unwrap()
+                    .naming
+                    .as_mut()
+                    .unwrap()
+                    .pop();
+                true
+            }
+            Action::InputConfirm => {
+                let name = self
+                    .bookmark_panel
+                    .as_ref()
+                    .unwrap()
+                    .naming
+                    .as_ref()
+                    .unwrap()
+                    .clone();
+                self.bookmark_panel.as_mut().unwrap().naming = None;
+                if !name.is_empty() {
+                    let path = self.dual_pane.active_explorer().current_dir.clone();
+                    self.bookmarks.add(name, path);
+                    // Move cursor to newly added entry.
+                    let count = self.bookmarks.entries.len();
+                    if count > 0 {
+                        self.bookmark_panel.as_mut().unwrap().cursor = count - 1;
+                    }
+                }
+                true
+            }
+            Action::InputCancel => {
+                self.bookmark_panel.as_mut().unwrap().naming = None;
+                true
+            }
+            Action::Quit | Action::Tick | Action::Resize(_, _) | Action::Noop => false,
+            _ => true,
         }
     }
 
@@ -1176,5 +1369,124 @@ mod tests {
         app.input_mode = InputMode::CreateTypeChoice;
         app.dispatch(Action::InputCancel);
         assert!(matches!(app.input_mode, InputMode::Normal));
+    }
+
+    // ── Bookmark panel ────────────────────────────────────────
+
+    #[test]
+    fn ctrl_b_maps_to_open_bookmarks() {
+        let app = make_app();
+        assert!(matches!(app.map_key(ctrl('b')), Action::OpenBookmarks));
+    }
+
+    #[test]
+    fn open_bookmarks_shows_panel() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        assert!(app.bookmark_panel.is_some());
+    }
+
+    #[test]
+    fn bookmark_close_hides_panel() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        app.dispatch(Action::BookmarkClose);
+        assert!(app.bookmark_panel.is_none());
+    }
+
+    #[test]
+    fn bookmark_panel_intercepts_up_down() {
+        let mut app = make_app();
+        // Add a couple of bookmarks so we can navigate.
+        app.bookmarks
+            .entries
+            .push(crate::bookmarks::BookmarkEntry {
+                name: "a".to_string(),
+                path: std::path::PathBuf::from("."),
+            });
+        app.bookmarks
+            .entries
+            .push(crate::bookmarks::BookmarkEntry {
+                name: "b".to_string(),
+                path: std::path::PathBuf::from("."),
+            });
+        app.dispatch(Action::OpenBookmarks);
+        let panel = app.bookmark_panel.as_ref().unwrap();
+        assert_eq!(panel.cursor, 0);
+        app.dispatch(Action::MoveDown);
+        let panel = app.bookmark_panel.as_ref().unwrap();
+        assert_eq!(panel.cursor, 1);
+        app.dispatch(Action::MoveUp);
+        let panel = app.bookmark_panel.as_ref().unwrap();
+        assert_eq!(panel.cursor, 0);
+    }
+
+    #[test]
+    fn bookmark_add_starts_naming_with_default_folder_name() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        app.dispatch(Action::BookmarkAdd);
+        let panel = app.bookmark_panel.as_ref().unwrap();
+        // naming should be Some - default name is last segment of current dir
+        assert!(panel.naming.is_some());
+    }
+
+    #[test]
+    fn bookmark_naming_confirm_adds_entry() {
+        let mut app = make_app();
+        let initial_count = app.bookmarks.entries.len();
+        app.dispatch(Action::OpenBookmarks);
+        app.dispatch(Action::BookmarkAdd);
+        // Confirm with the pre-filled default name.
+        app.dispatch(Action::InputConfirm);
+        assert!(app.bookmark_panel.as_ref().unwrap().naming.is_none());
+        // An entry should have been added.
+        assert!(app.bookmarks.entries.len() > initial_count);
+    }
+
+    #[test]
+    fn bookmark_naming_cancel_discards_input() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        app.dispatch(Action::BookmarkAdd);
+        let initial_count = app.bookmarks.entries.len();
+        app.dispatch(Action::InputChar('x'));
+        app.dispatch(Action::InputCancel);
+        assert!(app.bookmark_panel.as_ref().unwrap().naming.is_none());
+        assert_eq!(app.bookmarks.entries.len(), initial_count);
+    }
+
+    #[test]
+    fn bookmark_remove_deletes_entry() {
+        let mut app = make_app();
+        app.bookmarks
+            .entries
+            .push(crate::bookmarks::BookmarkEntry {
+                name: "tmp".to_string(),
+                path: std::path::PathBuf::from("."),
+            });
+        app.dispatch(Action::OpenBookmarks);
+        let initial_count = app.bookmarks.entries.len();
+        app.dispatch(Action::BookmarkRemove);
+        assert_eq!(app.bookmarks.entries.len(), initial_count - 1);
+    }
+
+    #[test]
+    fn bookmark_panel_key_esc_closes() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        // Esc maps to BookmarkClose when panel is open
+        let action = app.map_key(key(KeyCode::Esc));
+        assert!(matches!(action, Action::BookmarkClose));
+    }
+
+    #[test]
+    fn bookmark_panel_naming_key_enter_maps_to_confirm() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenBookmarks);
+        app.dispatch(Action::BookmarkAdd);
+        // When naming is active, Enter maps to InputConfirm
+        let action = app.map_key(key(KeyCode::Enter));
+        assert!(matches!(action, Action::InputConfirm));
     }
 }

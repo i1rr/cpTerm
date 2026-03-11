@@ -1,3 +1,4 @@
+pub mod bookmark_panel;
 pub mod command_bar;
 pub mod dialog;
 pub mod dual_pane;

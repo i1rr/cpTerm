@@ -56,6 +56,12 @@ pub enum Action {
     InputConfirm,
     InputCancel,
     StartCommand(char),
+    // Bookmarks
+    OpenBookmarks,
+    BookmarkNavigate,
+    BookmarkAdd,
+    BookmarkRemove,
+    BookmarkClose,
     // Theme editor
     OpenThemeEditor,
     ThemeEditorClose,
