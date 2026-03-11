@@ -5,6 +5,7 @@ mod components;
 mod config;
 mod event;
 mod fs;
+mod logger;
 mod tui;
 mod util;
 
@@ -19,6 +20,7 @@ use crate::config::SessionConfig;
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
+    logger::init();
 
     let args = Cli::parse();
     let session = SessionConfig::load();
@@ -37,6 +39,8 @@ async fn main() -> Result<()> {
 
     let mut app = app::App::new(left_dir, right_dir, active);
     app.run().await?;
+
+    logger::dump();
 
     Ok(())
 }

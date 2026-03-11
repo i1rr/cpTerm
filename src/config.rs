@@ -44,6 +44,8 @@ impl SessionConfig {
     }
 
     pub fn save(&self) {
-        let _ = confy::store("cpt", None, self);
+        if let Err(e) = confy::store("cpt", None, self) {
+            log::warn!("failed to save session config: {}", e);
+        }
     }
 }

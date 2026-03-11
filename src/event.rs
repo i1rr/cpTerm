@@ -27,7 +27,14 @@ impl EventHandler {
                 if token.is_cancelled() {
                     break;
                 }
-                if event::poll(tick_rate).unwrap_or(false) {
+                let has_event = match event::poll(tick_rate) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::warn!("event poll error: {}", e);
+                        continue;
+                    }
+                };
+                if has_event {
                     match event::read() {
                         Ok(CrosstermEvent::Key(key)) => {
                             if key.kind == KeyEventKind::Press {
@@ -38,6 +45,9 @@ impl EventHandler {
                         }
                         Ok(CrosstermEvent::Resize(w, h)) => {
                             let _ = tx.send(Event::Resize(w, h));
+                        }
+                        Err(e) => {
+                            log::warn!("event read error: {}", e);
                         }
                         _ => {}
                     }

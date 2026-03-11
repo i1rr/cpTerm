@@ -48,8 +48,12 @@ impl FileEntry {
 }
 
 pub fn read_directory(dir: &Path) -> Vec<FileEntry> {
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return Vec::new();
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            log::warn!("failed to read directory {}: {}", dir.display(), e);
+            return Vec::new();
+        }
     };
 
     let mut entries: Vec<FileEntry> = read_dir
