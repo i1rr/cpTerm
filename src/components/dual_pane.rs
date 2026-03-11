@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::action::Action;
 use crate::config::PaneSide;
+use crate::theme::Theme;
 
 use super::explorer::Explorer;
 
@@ -74,15 +75,15 @@ impl DualPane {
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
 
         self.left
-            .draw(frame, chunks[0], self.active == PaneSide::Left);
+            .draw(frame, chunks[0], self.active == PaneSide::Left, theme);
         self.right
-            .draw(frame, chunks[1], self.active == PaneSide::Right);
+            .draw(frame, chunks[1], self.active == PaneSide::Right, theme);
     }
 }

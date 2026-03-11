@@ -1,8 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+
+use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub enum DialogKind {
@@ -67,12 +69,12 @@ impl Dialog {
         self.scroll = self.scroll.saturating_add(1);
     }
 
-    pub fn draw(&self, frame: &mut Frame, area: Rect) {
+    pub fn draw(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let (text, block) = match &self.kind {
             DialogKind::Confirm { title, message } => {
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(theme.confirm_border))
                     .title(Line::from(format!(" {} ", title)));
                 let text = format!("{}\n\nEnter: Confirm  Esc: Cancel", message);
                 (text, block)
@@ -80,14 +82,14 @@ impl Dialog {
             DialogKind::Conflict { title, message } => {
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::LightRed))
+                    .border_style(Style::default().fg(theme.conflict_border))
                     .title(Line::from(format!(" {} - Conflict ", title)));
                 (message.clone(), block)
             }
             DialogKind::Error(msg) => {
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Red))
+                    .border_style(Style::default().fg(theme.error_border))
                     .title(Line::from(" Error "));
                 let text = format!("{}\n\nPress Esc to dismiss", msg);
                 (text, block)
@@ -95,7 +97,7 @@ impl Dialog {
             DialogKind::Info(msg) => {
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green))
+                    .border_style(Style::default().fg(theme.info_border))
                     .title(Line::from(" Info "));
                 let hint = if self.scroll > 0 || self.content_lines(msg) > 10 {
                     "Up/Down: scroll  Esc: dismiss"
@@ -116,12 +118,12 @@ impl Dialog {
         frame.render_widget(Clear, popup_area);
 
         let style = match &self.kind {
-            DialogKind::Confirm { .. } => Style::default().fg(Color::White),
-            DialogKind::Conflict { .. } => Style::default().fg(Color::LightRed),
+            DialogKind::Confirm { .. } => Style::default().fg(theme.confirm_fg),
+            DialogKind::Conflict { .. } => Style::default().fg(theme.conflict_fg),
             DialogKind::Error(_) => Style::default()
-                .fg(Color::Red)
+                .fg(theme.error_fg)
                 .add_modifier(Modifier::BOLD),
-            DialogKind::Info(_) => Style::default().fg(Color::Green),
+            DialogKind::Info(_) => Style::default().fg(theme.info_fg),
         };
 
         let paragraph = Paragraph::new(text)

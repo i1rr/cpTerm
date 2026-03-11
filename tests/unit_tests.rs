@@ -1474,6 +1474,181 @@ fn pane_side_equality() {
     assert_ne!(cpt::config::PaneSide::Left, cpt::config::PaneSide::Right);
 }
 
+// ── Theme ───────────────────────────────────────────────────
+
+#[test]
+fn theme_default_and_muted_differ() {
+    let d = cpt::theme::Theme::default();
+    let m = cpt::theme::Theme::muted();
+    // At least border_focused should differ
+    assert_ne!(format!("{:?}", d.border_focused), format!("{:?}", m.border_focused));
+}
+
+#[test]
+fn theme_by_name_returns_builtin() {
+    let d = cpt::theme::Theme::by_name("default");
+    assert_eq!(format!("{:?}", d.border_focused), format!("{:?}", ratatui::style::Color::Cyan));
+    let m = cpt::theme::Theme::by_name("muted");
+    assert_eq!(format!("{:?}", m.border_focused), format!("{:?}", ratatui::style::Color::White));
+}
+
+#[test]
+fn theme_by_name_unknown_returns_default() {
+    let t = cpt::theme::Theme::by_name("nonexistent");
+    let d = cpt::theme::Theme::default();
+    assert_eq!(format!("{:?}", t.border_focused), format!("{:?}", d.border_focused));
+}
+
+#[test]
+fn theme_is_builtin() {
+    assert!(cpt::theme::Theme::is_builtin("default"));
+    assert!(cpt::theme::Theme::is_builtin("muted"));
+    assert!(!cpt::theme::Theme::is_builtin("my-custom"));
+}
+
+#[test]
+fn theme_field_get_set() {
+    let mut t = cpt::theme::Theme::default();
+    assert_eq!(format!("{:?}", t.get_field(0)), format!("{:?}", t.border_focused));
+    t.set_field(0, ratatui::style::Color::Red);
+    assert_eq!(format!("{:?}", t.get_field(0)), format!("{:?}", ratatui::style::Color::Red));
+    assert_eq!(format!("{:?}", t.border_focused), format!("{:?}", ratatui::style::Color::Red));
+}
+
+#[test]
+fn theme_field_get_set_all_25() {
+    let mut t = cpt::theme::Theme::default();
+    for i in 0..cpt::theme::FIELD_COUNT {
+        let original = t.get_field(i);
+        t.set_field(i, ratatui::style::Color::Magenta);
+        assert_eq!(format!("{:?}", t.get_field(i)), format!("{:?}", ratatui::style::Color::Magenta));
+        t.set_field(i, original);
+    }
+}
+
+#[test]
+fn theme_serialize_roundtrip_named_colors() {
+    let theme = cpt::theme::Theme::default();
+    let serialized = toml::to_string_pretty(&theme).expect("serialize failed");
+    let deserialized: cpt::theme::Theme =
+        toml::from_str(&serialized).expect("deserialize failed");
+    // Verify all 25 fields match
+    for i in 0..cpt::theme::FIELD_COUNT {
+        assert_eq!(
+            format!("{:?}", theme.get_field(i)),
+            format!("{:?}", deserialized.get_field(i)),
+            "field {} mismatch after roundtrip",
+            i
+        );
+    }
+}
+
+#[test]
+fn theme_serialize_roundtrip_indexed_colors() {
+    let mut theme = cpt::theme::Theme::default();
+    // Set some fields to indexed colors (from the color picker)
+    theme.set_field(0, cpt::theme::indexed_to_color(42));
+    theme.set_field(1, cpt::theme::indexed_to_color(200));
+    theme.set_field(2, cpt::theme::indexed_to_color(232));
+    let serialized = toml::to_string_pretty(&theme).expect("serialize failed");
+    let deserialized: cpt::theme::Theme =
+        toml::from_str(&serialized).expect("deserialize failed");
+    for i in 0..cpt::theme::FIELD_COUNT {
+        assert_eq!(
+            format!("{:?}", theme.get_field(i)),
+            format!("{:?}", deserialized.get_field(i)),
+            "field {} mismatch after indexed roundtrip",
+            i
+        );
+    }
+}
+
+#[test]
+fn theme_save_load_file_roundtrip() {
+    let dir = tempdir("theme_save_load");
+    let themes_dir = dir.join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+
+    let mut theme = cpt::theme::Theme::default();
+    theme.set_field(0, ratatui::style::Color::Red);
+
+    // Save manually (since save_to_file uses confy path)
+    let path = themes_dir.join("test-theme.toml");
+    let content = toml::to_string_pretty(&theme).unwrap();
+    fs::write(&path, &content).unwrap();
+
+    // Load back
+    let loaded_content = fs::read_to_string(&path).unwrap();
+    let loaded: cpt::theme::Theme = toml::from_str(&loaded_content).unwrap();
+    assert_eq!(
+        format!("{:?}", loaded.border_focused),
+        format!("{:?}", ratatui::style::Color::Red)
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn theme_color_index_roundtrip() {
+    use cpt::theme::{color_to_index, indexed_to_color};
+    // Named colors roundtrip through index
+    for idx in 0..=15u8 {
+        let color = indexed_to_color(idx);
+        let back = color_to_index(color);
+        assert_eq!(idx, back, "named color index {} didn't roundtrip", idx);
+    }
+    // Indexed colors stay as indexed
+    for idx in 16..=255u8 {
+        let color = indexed_to_color(idx);
+        let back = color_to_index(color);
+        assert_eq!(idx, back, "indexed color {} didn't roundtrip", idx);
+    }
+}
+
+#[test]
+fn theme_next_includes_builtins() {
+    // next_theme_name always includes "default" and "muted" (plus any custom files on disk)
+    let names = cpt::theme::Theme::all_theme_names();
+    assert!(names.contains(&"default".to_string()));
+    assert!(names.contains(&"muted".to_string()));
+    // Cycling from default should reach muted eventually
+    let mut current = "default".to_string();
+    let mut found_muted = false;
+    for _ in 0..names.len() {
+        current = cpt::theme::Theme::next_theme_name(&current);
+        if current == "muted" {
+            found_muted = true;
+            break;
+        }
+    }
+    assert!(found_muted, "cycling from default never reached muted");
+}
+
+#[test]
+fn theme_next_unknown_wraps() {
+    // Unknown name falls back to index 0, so next is index 1
+    let n = cpt::theme::Theme::next_theme_name("nonexistent");
+    let names = cpt::theme::Theme::all_theme_names();
+    assert_eq!(n, names[1], "should wrap to second theme");
+}
+
+#[test]
+fn theme_color_display_name_named() {
+    assert_eq!(cpt::theme::color_display_name(ratatui::style::Color::Cyan), "Cyan");
+    assert_eq!(cpt::theme::color_display_name(ratatui::style::Color::Black), "Black");
+}
+
+#[test]
+fn theme_color_display_name_indexed() {
+    // Indexed colors in the cube show R:G:B
+    let name = cpt::theme::color_display_name(ratatui::style::Color::Indexed(16));
+    assert!(name.contains("0:0:0"), "got: {}", name);
+    // Grayscale
+    let name = cpt::theme::color_display_name(ratatui::style::Color::Indexed(232));
+    assert!(name.contains("gray"), "got: {}", name);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {

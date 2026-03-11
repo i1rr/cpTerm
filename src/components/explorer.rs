@@ -3,12 +3,13 @@ use std::path::PathBuf;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Row, Table, TableState};
 
 use crate::action::Action;
 use crate::fs::entry::{FileEntry, read_directory};
+use crate::theme::Theme;
 use crate::util::{format_date, format_size};
 
 pub struct Explorer {
@@ -250,11 +251,11 @@ impl Explorer {
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect, focused: bool) {
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, focused: bool, theme: &Theme) {
         let border_style = if focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.border_focused)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.border_unfocused)
         };
 
         let title = self.current_dir.to_string_lossy().to_string();
@@ -322,13 +323,13 @@ impl Explorer {
 
             let mut style = Style::default();
             if entry.is_dir {
-                style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
+                style = style.fg(theme.dir_fg).add_modifier(Modifier::BOLD);
             }
             if entry.is_hidden {
                 style = style.add_modifier(Modifier::DIM);
             }
             if is_selected {
-                style = style.bg(Color::Yellow).fg(Color::Black);
+                style = style.bg(theme.selected_bg).fg(theme.selected_fg);
             }
             if is_cursor {
                 style = style.add_modifier(Modifier::REVERSED);

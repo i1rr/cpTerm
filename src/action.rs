@@ -55,6 +55,17 @@ pub enum Action {
     InputConfirm,
     InputCancel,
     StartCommand(char),
+    // Theme editor
+    OpenThemeEditor,
+    ThemeEditorClose,
+    ThemeEditorCycleBase,
+    ThemeEditorSave,
+    ThemeEditorSaveAs,
+    ThemeEditorOpenFile,
+    ThemeEditorDelete,
+    ThemeEditorOpenPicker,
+    ThemeEditorPickerLeft,
+    ThemeEditorPickerRight,
     Error(String),
     Noop,
 }

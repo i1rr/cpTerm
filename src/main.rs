@@ -6,6 +6,7 @@ mod config;
 mod event;
 mod fs;
 mod logger;
+mod theme;
 mod tui;
 mod util;
 
@@ -36,8 +37,9 @@ async fn main() -> Result<()> {
         .unwrap_or(session.right_dir);
 
     let active = session.active_pane;
+    let theme_name = session.theme_name;
 
-    let mut app = app::App::new(left_dir, right_dir, active);
+    let mut app = app::App::new(left_dir, right_dir, active, theme_name);
     app.run().await?;
 
     logger::dump();

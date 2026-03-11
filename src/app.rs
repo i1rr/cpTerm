@@ -10,9 +10,11 @@ use crate::components::command_bar::draw_command_bar;
 use crate::components::dialog::Dialog;
 use crate::components::dual_pane::DualPane;
 use crate::components::status_bar::draw_status_bar;
+use crate::components::theme_editor::ThemeEditor;
 use crate::config::{PaneSide, SessionConfig};
 use crate::event::{Event, EventHandler};
 use crate::fs::ops;
+use crate::theme::Theme;
 use crate::tui;
 use crate::util::clean_canonicalize;
 
@@ -41,19 +43,31 @@ pub struct App {
     pub input_mode: InputMode,
     pub dialog: Option<Dialog>,
     pub should_quit: bool,
+    pub theme: Theme,
+    pub theme_name: String,
+    pub theme_editor: Option<ThemeEditor>,
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
     pending_op: Option<PendingOp>,
 }
 
 impl App {
-    pub fn new(left_dir: PathBuf, right_dir: PathBuf, active: PaneSide) -> Self {
+    pub fn new(
+        left_dir: PathBuf,
+        right_dir: PathBuf,
+        active: PaneSide,
+        theme_name: String,
+    ) -> Self {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let theme = Theme::by_name(&theme_name);
         Self {
             dual_pane: DualPane::new(left_dir, right_dir, active),
             input_mode: InputMode::Normal,
             dialog: None,
             should_quit: false,
+            theme,
+            theme_name,
+            theme_editor: None,
             action_tx,
             action_rx,
             pending_op: None,
@@ -65,10 +79,8 @@ impl App {
         let mut events = EventHandler::new(std::time::Duration::from_millis(250));
 
         loop {
-            // Draw
             terminal.draw(|frame| self.draw(frame))?;
 
-            // Handle events
             tokio::select! {
                 event = events.next() => {
                     if let Some(event) = event {
@@ -97,18 +109,22 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(5),    // dual pane
-                Constraint::Length(1), // status bar
-                Constraint::Length(1), // command bar
+                Constraint::Min(5),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(frame.area());
 
-        self.dual_pane.draw(frame, chunks[0]);
-        draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode);
-        draw_command_bar(frame, chunks[2], &self.input_mode);
+        self.dual_pane.draw(frame, chunks[0], &self.theme);
+        draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
+        draw_command_bar(frame, chunks[2], &self.input_mode, &self.theme);
+
+        if let Some(ref mut editor) = self.theme_editor {
+            editor.draw(frame, frame.area(), &self.theme, &self.theme_name);
+        }
 
         if let Some(ref dialog) = self.dialog {
-            dialog.draw(frame, frame.area());
+            dialog.draw(frame, frame.area(), &self.theme);
         }
     }
 
@@ -121,7 +137,7 @@ impl App {
     }
 
     fn map_key(&self, key: KeyEvent) -> Action {
-        // Dialog intercepts keys first
+        // Dialog intercepts first
         if self.dialog.is_some() {
             return match key.code {
                 KeyCode::Enter => Action::ConfirmDialog,
@@ -134,7 +150,12 @@ impl App {
             };
         }
 
-        // Input mode intercepts keys
+        // Theme editor intercepts (with sub-states)
+        if let Some(ref editor) = self.theme_editor {
+            return self.map_theme_editor_key(key, editor);
+        }
+
+        // Input mode intercepts
         match &self.input_mode {
             InputMode::Filter(_) => {
                 return match key.code {
@@ -191,6 +212,7 @@ impl App {
                 Action::DeleteSelected
             }
             (KeyModifiers::CONTROL, KeyCode::Char('f')) => Action::StartFilter,
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) => Action::OpenThemeEditor,
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
             (KeyModifiers::NONE, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
@@ -201,7 +223,55 @@ impl App {
         }
     }
 
+    fn map_theme_editor_key(&self, key: KeyEvent, editor: &ThemeEditor) -> Action {
+        // Naming mode: text input
+        if editor.naming.is_some() {
+            return match key.code {
+                KeyCode::Char(c) => Action::InputChar(c),
+                KeyCode::Backspace => Action::InputBackspace,
+                KeyCode::Enter => Action::InputConfirm,
+                KeyCode::Esc => Action::InputCancel,
+                _ => Action::Noop,
+            };
+        }
+
+        // Color picker mode
+        if editor.picker.is_some() {
+            return match key.code {
+                KeyCode::Up => Action::MoveUp,
+                KeyCode::Down => Action::MoveDown,
+                KeyCode::Left => Action::ThemeEditorPickerLeft,
+                KeyCode::Right => Action::ThemeEditorPickerRight,
+                KeyCode::Enter => Action::InputConfirm,
+                KeyCode::Esc => Action::InputCancel,
+                _ => Action::Noop,
+            };
+        }
+
+        // Normal editor mode
+        match key.code {
+            KeyCode::Up => Action::MoveUp,
+            KeyCode::Down => Action::MoveDown,
+            KeyCode::Home => Action::MoveToTop,
+            KeyCode::End => Action::MoveToBottom,
+            KeyCode::PageUp => Action::PageUp,
+            KeyCode::PageDown => Action::PageDown,
+            KeyCode::Enter => Action::ThemeEditorOpenPicker,
+            KeyCode::Tab => Action::ThemeEditorCycleBase,
+            KeyCode::F(2) => Action::ThemeEditorSave,
+            KeyCode::Char('n') => Action::ThemeEditorSaveAs,
+            KeyCode::Char('e') => Action::ThemeEditorOpenFile,
+            KeyCode::Delete => Action::ThemeEditorDelete,
+            KeyCode::Esc => Action::ThemeEditorClose,
+            _ => Action::Noop,
+        }
+    }
+
     fn dispatch(&mut self, action: Action) {
+        if self.theme_editor.is_some() && self.dispatch_theme_editor(&action) {
+            return;
+        }
+
         match action {
             Action::Quit => {
                 self.save_session();
@@ -209,6 +279,9 @@ impl App {
             }
             Action::Noop | Action::Tick => {}
             Action::Resize(_, _) => {}
+            Action::OpenThemeEditor => {
+                self.theme_editor = Some(ThemeEditor::new());
+            }
             Action::DismissDialog => {
                 self.dialog = None;
             }
@@ -422,9 +495,7 @@ impl App {
                 self.dual_pane.right.refresh();
                 self.dialog = Some(Dialog::error(msg));
             }
-            Action::OperationProgress { .. } => {
-                // Could update a progress indicator in the future
-            }
+            Action::OperationProgress { .. } => {}
             Action::ShowHelp => {
                 self.dialog = Some(Dialog::info(
                     "(Up/Down to scroll this help)\n\
@@ -448,6 +519,7 @@ impl App {
                      F7 - create directory\n\
                      F8/Del - delete\n\
                      Ctrl+F - quick filter\n\
+                     Ctrl+T - theme editor\n\
                      Ctrl+R - refresh\n\
                      q/Ctrl+Q - quit\n\
                      \n\
@@ -457,11 +529,275 @@ impl App {
             Action::Error(msg) => {
                 self.dialog = Some(Dialog::error(msg));
             }
+            // Theme editor actions without editor open are no-ops
+            Action::ThemeEditorClose
+            | Action::ThemeEditorCycleBase
+            | Action::ThemeEditorSave
+            | Action::ThemeEditorSaveAs
+            | Action::ThemeEditorOpenFile
+            | Action::ThemeEditorDelete
+            | Action::ThemeEditorOpenPicker
+            | Action::ThemeEditorPickerLeft
+            | Action::ThemeEditorPickerRight => {}
             other => {
                 if let Some(follow_up) = self.dual_pane.handle_action(&other) {
                     self.dispatch(follow_up);
                 }
             }
+        }
+    }
+
+    /// Handle actions when the theme editor is open.
+    /// Returns true if the action was consumed.
+    fn dispatch_theme_editor(&mut self, action: &Action) -> bool {
+        // Dialog actions always pass through so dialogs can dismiss
+        if self.dialog.is_some() {
+            match action {
+                Action::DismissDialog
+                | Action::ConfirmDialog
+                | Action::DialogScrollUp
+                | Action::DialogScrollDown
+                | Action::ConflictOverwrite
+                | Action::ConflictRename => return false,
+                _ => {}
+            }
+        }
+        // Naming sub-state
+        if self.theme_editor.as_ref().unwrap().naming.is_some() {
+            return self.dispatch_theme_naming(action);
+        }
+        // Picker sub-state
+        if self.theme_editor.as_ref().unwrap().picker.is_some() {
+            return self.dispatch_theme_picker(action);
+        }
+        // Normal editor
+        self.dispatch_theme_normal(action)
+    }
+
+    fn dispatch_theme_naming(&mut self, action: &Action) -> bool {
+        match action {
+            Action::InputChar(c) => {
+                // Only allow valid filename chars
+                if c.is_alphanumeric() || *c == '-' || *c == '_' {
+                    self.theme_editor.as_mut().unwrap().naming.as_mut().unwrap().push(*c);
+                }
+                true
+            }
+            Action::InputBackspace => {
+                self.theme_editor.as_mut().unwrap().naming.as_mut().unwrap().pop();
+                true
+            }
+            Action::InputConfirm => {
+                let name = self.theme_editor.as_ref().unwrap().naming.as_ref().unwrap().clone();
+                self.theme_editor.as_mut().unwrap().naming = None;
+                if !name.is_empty() {
+                    self.theme_name = name.clone();
+                    match self.theme.save_to_file(&name) {
+                        Ok(path) => {
+                            self.dialog = Some(Dialog::info(format!(
+                                "Theme '{}' saved to:\n{}",
+                                name,
+                                path.display()
+                            )));
+                        }
+                        Err(e) => {
+                            self.dialog = Some(Dialog::error(e));
+                        }
+                    }
+                }
+                true
+            }
+            Action::InputCancel => {
+                self.theme_editor.as_mut().unwrap().naming = None;
+                true
+            }
+            Action::Quit | Action::Tick | Action::Resize(_, _) | Action::Noop => false,
+            _ => true,
+        }
+    }
+
+    fn dispatch_theme_picker(&mut self, action: &Action) -> bool {
+        // Compute what to do without holding mutable borrows
+        enum PickerOp {
+            Move,
+            Confirm,
+            Cancel(ratatui::style::Color),
+            Swallow,
+            PassThrough,
+        }
+
+        let op = {
+            let editor = self.theme_editor.as_mut().unwrap();
+            let picker = editor.picker.as_mut().unwrap();
+            match action {
+                Action::MoveUp => {
+                    picker.move_up();
+                    PickerOp::Move
+                }
+                Action::MoveDown => {
+                    picker.move_down();
+                    PickerOp::Move
+                }
+                Action::ThemeEditorPickerLeft => {
+                    picker.move_left();
+                    PickerOp::Move
+                }
+                Action::ThemeEditorPickerRight => {
+                    picker.move_right();
+                    PickerOp::Move
+                }
+                Action::InputConfirm => PickerOp::Confirm,
+                Action::InputCancel => PickerOp::Cancel(picker.original),
+                Action::Quit | Action::Tick | Action::Resize(_, _) | Action::Noop => {
+                    PickerOp::PassThrough
+                }
+                _ => PickerOp::Swallow,
+            }
+        };
+
+        match op {
+            PickerOp::Move => {
+                let editor = self.theme_editor.as_ref().unwrap();
+                let picker = editor.picker.as_ref().unwrap();
+                let field_idx = editor.cursor;
+                let color = picker.current_color();
+                self.theme.set_field(field_idx, color);
+                true
+            }
+            PickerOp::Confirm => {
+                self.theme_editor.as_mut().unwrap().picker = None;
+                true
+            }
+            PickerOp::Cancel(original) => {
+                let field_idx = self.theme_editor.as_ref().unwrap().cursor;
+                self.theme_editor.as_mut().unwrap().picker = None;
+                self.theme.set_field(field_idx, original);
+                true
+            }
+            PickerOp::Swallow => true,
+            PickerOp::PassThrough => false,
+        }
+    }
+
+    fn dispatch_theme_normal(&mut self, action: &Action) -> bool {
+        match action {
+            Action::MoveUp => {
+                self.theme_editor.as_mut().unwrap().move_up();
+                true
+            }
+            Action::MoveDown => {
+                self.theme_editor.as_mut().unwrap().move_down();
+                true
+            }
+            Action::MoveToTop => {
+                self.theme_editor.as_mut().unwrap().move_to_top();
+                true
+            }
+            Action::MoveToBottom => {
+                self.theme_editor.as_mut().unwrap().move_to_bottom();
+                true
+            }
+            Action::PageUp => {
+                self.theme_editor.as_mut().unwrap().page_up();
+                true
+            }
+            Action::PageDown => {
+                self.theme_editor.as_mut().unwrap().page_down();
+                true
+            }
+            Action::ThemeEditorOpenPicker => {
+                let field_idx = self.theme_editor.as_ref().unwrap().cursor;
+                let current_color = self.theme.get_field(field_idx);
+                self.theme_editor.as_mut().unwrap().open_picker(current_color);
+                true
+            }
+            Action::ThemeEditorCycleBase => {
+                // Auto-save custom theme before switching away
+                if !Theme::is_builtin(&self.theme_name) {
+                    let _ = self.theme.save_to_file(&self.theme_name);
+                }
+                self.theme_name = Theme::next_theme_name(&self.theme_name);
+                self.theme = Theme::by_name(&self.theme_name);
+                true
+            }
+            Action::ThemeEditorSave => {
+                if Theme::is_builtin(&self.theme_name) {
+                    // Built-in: enter naming mode
+                    self.theme_editor.as_mut().unwrap().start_naming();
+                } else {
+                    // Custom: overwrite
+                    let name = self.theme_name.clone();
+                    match self.theme.save_to_file(&name) {
+                        Ok(path) => {
+                            self.dialog = Some(Dialog::info(format!(
+                                "Theme '{}' saved to:\n{}",
+                                name,
+                                path.display()
+                            )));
+                        }
+                        Err(e) => {
+                            self.dialog = Some(Dialog::error(e));
+                        }
+                    }
+                }
+                true
+            }
+            Action::ThemeEditorSaveAs => {
+                self.theme_editor.as_mut().unwrap().start_naming();
+                true
+            }
+            Action::ThemeEditorOpenFile => {
+                if Theme::is_builtin(&self.theme_name) {
+                    // Built-in themes have no file - save as a custom theme first
+                    self.theme_editor.as_mut().unwrap().start_naming();
+                } else {
+                    // Save current colors and open the file
+                    let name = self.theme_name.clone();
+                    match self.theme.save_to_file(&name) {
+                        Ok(path) => {
+                            if let Err(e) = open::that(&path) {
+                                self.dialog = Some(Dialog::error(format!(
+                                    "Failed to open editor: {}\n\nFile: {}",
+                                    e,
+                                    path.display()
+                                )));
+                            }
+                        }
+                        Err(e) => {
+                            self.dialog = Some(Dialog::error(e));
+                        }
+                    }
+                }
+                true
+            }
+            Action::ThemeEditorDelete => {
+                if Theme::is_builtin(&self.theme_name) {
+                    self.dialog = Some(Dialog::error("Cannot delete a built-in theme"));
+                } else {
+                    let name = self.theme_name.clone();
+                    match Theme::delete_file(&name) {
+                        Ok(()) => {
+                            self.dialog = Some(Dialog::info(format!("Deleted theme '{}'", name)));
+                            self.theme_name = "default".to_string();
+                            self.theme = Theme::by_name(&self.theme_name);
+                        }
+                        Err(e) => {
+                            self.dialog = Some(Dialog::error(e));
+                        }
+                    }
+                }
+                true
+            }
+            Action::ThemeEditorClose => {
+                // Auto-save custom theme on close
+                if !Theme::is_builtin(&self.theme_name) {
+                    let _ = self.theme.save_to_file(&self.theme_name);
+                }
+                self.theme_editor = None;
+                true
+            }
+            Action::Quit | Action::Tick | Action::Resize(_, _) | Action::Noop => false,
+            _ => true,
         }
     }
 
@@ -484,7 +820,6 @@ impl App {
         let explorer = self.dual_pane.active_explorer();
         let mut sources = explorer.selected_paths();
         if sources.is_empty() {
-            // If nothing selected, use item under cursor
             if let Some(entry) = explorer.current_entry() {
                 sources.push(entry.path.clone());
             }
@@ -556,7 +891,6 @@ impl App {
                     .or_else(|_| std::env::var("HOME"))
                     .unwrap_or_else(|_| ".".to_string())
             } else if path_str.len() == 2 && path_str.ends_with(':') {
-                // Bare drive letter like "c:" -> treat as "C:\"
                 format!("{}\\", path_str)
             } else {
                 path_str.to_string()
@@ -577,7 +911,8 @@ impl App {
                     explorer.refresh();
                 }
                 Ok(_) => {
-                    self.dialog = Some(Dialog::error(format!("Not a directory: {}", target.display())));
+                    self.dialog =
+                        Some(Dialog::error(format!("Not a directory: {}", target.display())));
                 }
                 Err(e) => {
                     self.dialog = Some(Dialog::error(format!("cd: {}", e)));
@@ -611,7 +946,10 @@ impl App {
                     result.push_str(&stderr);
                 }
                 if result.is_empty() {
-                    result = format!("Command completed (exit code: {})", output.status.code().unwrap_or(-1));
+                    result = format!(
+                        "Command completed (exit code: {})",
+                        output.status.code().unwrap_or(-1)
+                    );
                 }
                 self.dialog = Some(Dialog::info(result));
                 self.dual_pane.left.refresh();
@@ -628,6 +966,7 @@ impl App {
             left_dir: self.dual_pane.left.current_dir.clone(),
             right_dir: self.dual_pane.right.current_dir.clone(),
             active_pane: self.dual_pane.active,
+            theme_name: self.theme_name.clone(),
         };
         config.save();
     }

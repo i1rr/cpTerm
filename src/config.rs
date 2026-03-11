@@ -15,6 +15,12 @@ pub struct SessionConfig {
     pub left_dir: PathBuf,
     pub right_dir: PathBuf,
     pub active_pane: PaneSide,
+    #[serde(default = "default_theme_name")]
+    pub theme_name: String,
+}
+
+fn default_theme_name() -> String {
+    "default".to_string()
 }
 
 impl Default for SessionConfig {
@@ -24,6 +30,7 @@ impl Default for SessionConfig {
             left_dir: home.clone(),
             right_dir: home,
             active_pane: PaneSide::Left,
+            theme_name: default_theme_name(),
         }
     }
 }
