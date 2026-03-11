@@ -354,6 +354,7 @@ dependencies = [
  "color-eyre",
  "confy",
  "crossterm",
+ "log",
  "open",
  "ratatui",
  "serde",
