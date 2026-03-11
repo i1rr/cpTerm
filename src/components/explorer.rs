@@ -278,8 +278,15 @@ impl Explorer {
         };
 
         let title = self.current_dir.to_string_lossy().to_string();
-        let title = if title.len() > area.width as usize - 4 {
-            format!("..{}", &title[title.len() - (area.width as usize - 6)..])
+        let max_title = (area.width as usize).saturating_sub(4);
+        let title = if max_title < 3 {
+            String::new()
+        } else if title.len() > max_title {
+            let keep = max_title.saturating_sub(2);
+            // Find a safe char boundary for the suffix
+            let start = title.len() - keep;
+            let start = title.ceil_char_boundary(start);
+            format!("..{}", &title[start..])
         } else {
             title
         };

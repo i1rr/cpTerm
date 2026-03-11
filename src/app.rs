@@ -396,7 +396,10 @@ impl App {
         let explorer = self.dual_pane.active_explorer();
         if let Some(entry) = explorer.current_entry() {
             let old_path = entry.path.clone();
-            let new_path = old_path.parent().unwrap().join(new_name);
+            let Some(parent) = old_path.parent() else {
+                return;
+            };
+            let new_path = parent.join(new_name);
             if let Err(e) = std::fs::rename(&old_path, &new_path) {
                 self.dialog = Some(Dialog::error(format!("Rename failed: {}", e)));
             }
