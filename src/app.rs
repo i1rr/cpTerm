@@ -173,7 +173,6 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('f')) => Action::StartFilter,
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
-            (KeyModifiers::CONTROL, KeyCode::Char('h')) => Action::ToggleHidden,
             (KeyModifiers::NONE, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
             (KeyModifiers::NONE, KeyCode::Esc) => Action::FilterCancel,
@@ -371,7 +370,6 @@ impl App {
                      F7 - create directory\n\
                      F8/Del - delete\n\
                      Ctrl+F - quick filter\n\
-                     Ctrl+H - toggle hidden\n\
                      Ctrl+R - refresh\n\
                      q/Ctrl+Q - quit",
                 ));

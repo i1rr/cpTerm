@@ -534,26 +534,21 @@ fn explorer_filter_case_insensitive() {
 }
 
 #[test]
-fn explorer_toggle_hidden() {
+fn explorer_shows_hidden_files() {
     let dir = tempdir("explorer_hidden");
     fs::write(dir.join("visible.txt"), "").unwrap();
     fs::write(dir.join(".hidden"), "").unwrap();
 
-    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
-    assert!(!explorer.show_hidden);
+    let explorer = cpt::components::explorer::Explorer::new(dir.clone());
 
-    // Count visible entries (hidden files filtered out)
-    let visible_count = explorer.filtered.len();
-
-    // Toggle hidden on
-    explorer.handle_action(&cpt::action::Action::ToggleHidden);
-    assert!(explorer.show_hidden);
-    assert!(explorer.filtered.len() >= visible_count);
-
-    // Toggle hidden off
-    explorer.handle_action(&cpt::action::Action::ToggleHidden);
-    assert!(!explorer.show_hidden);
-    assert_eq!(explorer.filtered.len(), visible_count);
+    // Hidden files should be visible by default
+    let names: Vec<&str> = explorer
+        .filtered
+        .iter()
+        .map(|&i| explorer.entries[i].name.as_str())
+        .collect();
+    assert!(names.contains(&".hidden"));
+    assert!(names.contains(&"visible.txt"));
 
     fs::remove_dir_all(&dir).ok();
 }

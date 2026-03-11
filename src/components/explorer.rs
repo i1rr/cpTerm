@@ -35,7 +35,7 @@ impl Explorer {
             selected: HashSet::new(),
             sort_by: SortColumn::Name,
             sort_ascending: true,
-            show_hidden: false,
+            show_hidden: true,
             filter_text: None,
         };
         explorer.refresh();
@@ -53,9 +53,6 @@ impl Explorer {
         self.filtered = (0..self.entries.len())
             .filter(|&i| {
                 let entry = &self.entries[i];
-                if !self.show_hidden && entry.is_hidden {
-                    return false;
-                }
                 if let Some(ref filter) = self.filter_text {
                     if !filter.is_empty() {
                         return entry
@@ -216,12 +213,6 @@ impl Explorer {
             }
             Action::DeselectAll => {
                 self.selected.clear();
-                None
-            }
-            Action::ToggleHidden => {
-                self.show_hidden = !self.show_hidden;
-                self.apply_filter();
-                self.clamp_cursor();
                 None
             }
             Action::Refresh => {
