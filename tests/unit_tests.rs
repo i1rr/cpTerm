@@ -1879,6 +1879,214 @@ async fn run_task_captures_stderr() {
     );
 }
 
+// ── contrast_fg ───────────────────────────────────────────────
+
+#[test]
+fn contrast_fg_dark_named_colors_return_white() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Indices 0-6 and 8 are dark - should return white
+    assert_eq!(contrast_fg(0), Color::White, "index 0 (Black) should give White");
+    assert_eq!(contrast_fg(1), Color::White, "index 1 (Red) should give White");
+    assert_eq!(contrast_fg(4), Color::White, "index 4 (Blue) should give White");
+    assert_eq!(contrast_fg(8), Color::White, "index 8 (DarkGray) should give White");
+}
+
+#[test]
+fn contrast_fg_light_named_colors_return_black() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Indices 7 and 9-15 are light - should return black
+    assert_eq!(contrast_fg(7), Color::Black, "index 7 (Gray) should give Black");
+    assert_eq!(contrast_fg(15), Color::Black, "index 15 (White) should give Black");
+    assert_eq!(contrast_fg(11), Color::Black, "index 11 (LightYellow) should give Black");
+}
+
+#[test]
+fn contrast_fg_grayscale_boundary() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // 232-243 are dark grays - should return white
+    assert_eq!(contrast_fg(232), Color::White);
+    assert_eq!(contrast_fg(243), Color::White);
+    // 244-255 are light grays - should return black
+    assert_eq!(contrast_fg(244), Color::Black);
+    assert_eq!(contrast_fg(255), Color::Black);
+}
+
+#[test]
+fn contrast_fg_cube_dark_returns_white() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Index 16 = (0,0,0) in the 6x6x6 cube - very dark, should give white
+    assert_eq!(contrast_fg(16), Color::White);
+    // Index 17 = (0,0,1) - also dark
+    assert_eq!(contrast_fg(17), Color::White);
+}
+
+#[test]
+fn contrast_fg_cube_bright_returns_black() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Index 231 = (5,5,5) in the 6x6x6 cube - very bright, should give black
+    assert_eq!(contrast_fg(231), Color::Black);
+}
+
+// ── color_display_name edge cases ────────────────────────────
+
+#[test]
+fn color_display_name_indexed_low_does_not_panic() {
+    use cpt::theme::color_display_name;
+    use ratatui::style::Color;
+    // Color::Indexed(n) for n < 16 must not underflow or panic.
+    // These are not the same as the named variants (Color::Black != Color::Indexed(0)).
+    for n in 0u8..16 {
+        let name = color_display_name(Color::Indexed(n));
+        // Should contain the numeric index at minimum
+        assert!(
+            name.contains(&n.to_string()),
+            "display name for Indexed({}) should include the number, got: {}",
+            n,
+            name
+        );
+    }
+}
+
+#[test]
+fn color_display_name_rgb() {
+    use cpt::theme::color_display_name;
+    use ratatui::style::Color;
+    let name = color_display_name(Color::Rgb(255, 128, 0));
+    assert_eq!(name, "#FF8000");
+}
+
+// ── TaskState: cap removes oldest lines ──────────────────────
+
+#[test]
+fn task_state_push_line_caps_removes_oldest() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    // Fill to capacity
+    for i in 0..cpt::task::MAX_LINES {
+        task.push_line(format!("line {}", i));
+    }
+    assert_eq!(task.lines[0], "line 0");
+    assert_eq!(task.lines[cpt::task::MAX_LINES - 1], format!("line {}", cpt::task::MAX_LINES - 1));
+
+    // Push one more - line 0 should be evicted
+    task.push_line("new line".to_string());
+    assert_eq!(task.lines.len(), cpt::task::MAX_LINES);
+    assert_eq!(task.lines[0], "line 1", "oldest line should have been removed");
+    assert_eq!(task.lines[cpt::task::MAX_LINES - 1], "new line");
+}
+
+#[test]
+fn task_state_push_line_scroll_adjusts_when_capping_with_manual_scroll() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    // Fill to capacity
+    for i in 0..cpt::task::MAX_LINES {
+        task.push_line(format!("line {}", i));
+    }
+    // Manually scroll to position 10 and disable auto_scroll
+    task.scroll = 10;
+    task.auto_scroll = false;
+
+    // Push one more line - scroll should decrement to compensate for removed line
+    task.push_line("extra".to_string());
+    assert_eq!(task.scroll, 9, "scroll should decrement when oldest line is removed");
+}
+
+// ── copy_entries progress message contains item count ─────────
+
+#[tokio::test]
+async fn copy_entries_complete_message_contains_count() {
+    use cpt::action::Action;
+
+    let src_dir = tempdir("copy_count_src");
+    let dst_dir = tempdir("copy_count_dst");
+    fs::write(src_dir.join("a.txt"), "a").unwrap();
+    fs::write(src_dir.join("b.txt"), "b").unwrap();
+    fs::write(src_dir.join("c.txt"), "c").unwrap();
+
+    let sources = vec![
+        src_dir.join("a.txt"),
+        src_dir.join("b.txt"),
+        src_dir.join("c.txt"),
+    ];
+    let pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    cpt::fs::ops::copy_entries(pairs, tx).await;
+
+    let mut complete_msg: Option<String> = None;
+    let mut last_done = 0u64;
+    while let Ok(action) = rx.try_recv() {
+        match action {
+            Action::OperationProgress { done, total } => {
+                assert_eq!(total, 3);
+                last_done = done;
+            }
+            Action::OperationComplete(msg) => complete_msg = Some(msg),
+            _ => {}
+        }
+    }
+    assert_eq!(last_done, 3, "final progress should report 3 items done");
+    let msg = complete_msg.expect("expected OperationComplete");
+    assert!(msg.contains('3'), "complete message should mention count: {}", msg);
+
+    fs::remove_dir_all(&src_dir).ok();
+    fs::remove_dir_all(&dst_dir).ok();
+}
+
+#[tokio::test]
+async fn delete_entries_complete_message_contains_count() {
+    use cpt::action::Action;
+
+    let dir = tempdir("delete_count");
+    fs::write(dir.join("x.txt"), "x").unwrap();
+    fs::write(dir.join("y.txt"), "y").unwrap();
+
+    let sources = vec![dir.join("x.txt"), dir.join("y.txt")];
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    cpt::fs::ops::delete_entries(sources, tx).await;
+
+    let mut complete_msg: Option<String> = None;
+    while let Ok(action) = rx.try_recv() {
+        if let Action::OperationComplete(msg) = action {
+            complete_msg = Some(msg);
+        }
+    }
+    let msg = complete_msg.expect("expected OperationComplete");
+    assert!(msg.contains('2'), "complete message should mention count: {}", msg);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── build_pairs edge cases ────────────────────────────────────
+
+#[test]
+fn build_pairs_empty_sources_returns_empty() {
+    let dest = PathBuf::from("/dest");
+    let pairs = cpt::fs::ops::build_pairs(&[], &dest);
+    assert!(pairs.is_empty());
+}
+
+#[test]
+fn find_conflicts_all_conflict() {
+    let dir = tempdir("all_conflicts");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let pairs = vec![
+        (PathBuf::from("/src/a.txt"), dir.join("a.txt")),
+        (PathBuf::from("/src/b.txt"), dir.join("b.txt")),
+    ];
+    let conflicts = cpt::fs::ops::find_conflicts(&pairs);
+    assert_eq!(conflicts, vec![0, 1]);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
