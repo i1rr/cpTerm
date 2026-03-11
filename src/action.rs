@@ -66,6 +66,15 @@ pub enum Action {
     ThemeEditorOpenPicker,
     ThemeEditorPickerLeft,
     ThemeEditorPickerRight,
+    // Task runner
+    TaskLine(String),
+    TaskComplete(i32),
+    TaskError(String),
+    TaskMinimize,
+    TaskRestore,
+    TaskDismiss,
+    TaskScrollUp,
+    TaskScrollDown,
     Error(String),
     Noop,
 }

@@ -10,10 +10,12 @@ use crate::components::command_bar::draw_command_bar;
 use crate::components::dialog::Dialog;
 use crate::components::dual_pane::DualPane;
 use crate::components::status_bar::draw_status_bar;
+use crate::components::task_window::draw_task_window;
 use crate::components::theme_editor::ThemeEditor;
 use crate::config::{PaneSide, SessionConfig};
 use crate::event::{Event, EventHandler};
 use crate::fs::ops;
+use crate::task::{self, TaskState};
 use crate::theme::Theme;
 use crate::tui;
 use crate::util::clean_canonicalize;
@@ -26,6 +28,7 @@ pub enum InputMode {
     MkDir(String),
     CreateFile(String),
     Command(String),
+    TaskOutput,
 }
 
 enum PendingOp {
@@ -46,6 +49,7 @@ pub struct App {
     pub theme: Theme,
     pub theme_name: String,
     pub theme_editor: Option<ThemeEditor>,
+    pub task: Option<TaskState>,
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
     pending_op: Option<PendingOp>,
@@ -68,6 +72,7 @@ impl App {
             theme,
             theme_name,
             theme_editor: None,
+            task: None,
             action_tx,
             action_rx,
             pending_op: None,
@@ -117,10 +122,16 @@ impl App {
 
         self.dual_pane.draw(frame, chunks[0], &self.theme);
         draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
-        draw_command_bar(frame, chunks[2], &self.input_mode, &self.theme);
+        draw_command_bar(frame, chunks[2], &self.input_mode, self.task.as_ref(), &self.theme);
 
         if let Some(ref mut editor) = self.theme_editor {
             editor.draw(frame, frame.area(), &self.theme, &self.theme_name);
+        }
+
+        if matches!(self.input_mode, InputMode::TaskOutput)
+            && let Some(ref task) = self.task
+        {
+            draw_task_window(frame, frame.area(), task, &self.theme);
         }
 
         if let Some(ref dialog) = self.dialog {
@@ -184,6 +195,17 @@ impl App {
                     _ => Action::Noop,
                 };
             }
+            InputMode::TaskOutput => {
+                return match (key.modifiers, key.code) {
+                    (KeyModifiers::NONE, KeyCode::Up) => Action::TaskScrollUp,
+                    (KeyModifiers::NONE, KeyCode::Down) => Action::TaskScrollDown,
+                    (KeyModifiers::CONTROL, KeyCode::Char('z')) => Action::TaskMinimize,
+                    (KeyModifiers::NONE, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Enter) => {
+                        Action::TaskDismiss
+                    }
+                    _ => Action::Noop,
+                };
+            }
             InputMode::Normal => {}
         }
 
@@ -202,6 +224,7 @@ impl App {
                 Action::ToggleSelect
             }
             (KeyModifiers::CONTROL, KeyCode::Char('a')) => Action::SelectAll,
+            (KeyModifiers::CONTROL, KeyCode::Char('z')) => Action::TaskRestore,
             (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
             (KeyModifiers::NONE, KeyCode::F(4)) => Action::CreateFile,
@@ -268,6 +291,30 @@ impl App {
     }
 
     fn dispatch(&mut self, action: Action) {
+        // Task stream actions are processed regardless of any modal state so that
+        // background output keeps flowing while theme editor or dialogs are open.
+        if let Action::TaskLine(ref line) = action {
+            if let Some(ref mut task) = self.task {
+                task.push_line(line.clone());
+            }
+            return;
+        }
+        if let Action::TaskComplete(code) = action {
+            if let Some(ref mut task) = self.task {
+                task.finish(code);
+            }
+            return;
+        }
+        if let Action::TaskError(ref msg) = action {
+            if let Some(ref mut task) = self.task {
+                task.push_line(format!("error: {}", msg));
+                task.finish(-1);
+            } else {
+                self.dialog = Some(Dialog::error(msg));
+            }
+            return;
+        }
+
         if self.theme_editor.is_some() && self.dispatch_theme_editor(&action) {
             return;
         }
@@ -465,22 +512,30 @@ impl App {
                 match self.input_mode.clone() {
                     InputMode::Rename(new_name) => {
                         self.do_rename(&new_name);
+                        self.input_mode = InputMode::Normal;
                     }
                     InputMode::MkDir(name) => {
                         self.do_mkdir(&name);
+                        self.input_mode = InputMode::Normal;
                     }
                     InputMode::CreateFile(name) => {
                         self.do_create_file(&name);
+                        self.input_mode = InputMode::Normal;
                     }
                     InputMode::Command(cmd) => {
+                        // do_command sets input_mode itself (Normal or TaskOutput)
                         self.do_command(&cmd);
                     }
                     _ => {}
                 }
-                self.input_mode = InputMode::Normal;
             }
             Action::StartCommand(ch) => {
-                self.input_mode = InputMode::Command(String::from(ch));
+                if self.task.as_ref().map(|t| t.running).unwrap_or(false) {
+                    // Task running - restore window so user can see it
+                    self.input_mode = InputMode::TaskOutput;
+                } else {
+                    self.input_mode = InputMode::Command(String::from(ch));
+                }
             }
             Action::InputCancel => {
                 self.input_mode = InputMode::Normal;
@@ -496,6 +551,42 @@ impl App {
                 self.dialog = Some(Dialog::error(msg));
             }
             Action::OperationProgress { .. } => {}
+            Action::TaskMinimize => {
+                // Esc/Ctrl+Z from task window - always minimize to Normal
+                if self.task.is_some() {
+                    self.input_mode = InputMode::Normal;
+                }
+            }
+            Action::TaskRestore => {
+                // Ctrl+Z from Normal mode - restore task window
+                if self.task.is_some() {
+                    self.input_mode = InputMode::TaskOutput;
+                }
+            }
+            Action::TaskDismiss => {
+                // Esc/Enter from task window
+                if let Some(ref task) = self.task {
+                    if task.running {
+                        // Still running: minimize instead of close
+                        self.input_mode = InputMode::Normal;
+                    } else {
+                        self.task = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                }
+            }
+            Action::TaskScrollUp => {
+                if let Some(ref mut task) = self.task {
+                    task.scroll_up();
+                }
+            }
+            Action::TaskScrollDown => {
+                if let Some(ref mut task) = self.task {
+                    task.scroll_down();
+                }
+            }
+            // TaskLine/Complete/Error handled early above; these are unreachable
+            Action::TaskLine(_) | Action::TaskComplete(_) | Action::TaskError(_) => {}
             Action::ShowHelp => {
                 self.dialog = Some(Dialog::info(
                     "(Up/Down to scroll this help)\n\
@@ -874,6 +965,7 @@ impl App {
     fn do_command(&mut self, cmd: &str) {
         let cmd = cmd.trim();
         if cmd.is_empty() {
+            self.input_mode = InputMode::Normal;
             return;
         }
 
@@ -918,47 +1010,22 @@ impl App {
                     self.dialog = Some(Dialog::error(format!("cd: {}", e)));
                 }
             }
+            self.input_mode = InputMode::Normal;
             return;
         }
 
-        // Run as shell command
-        let cwd = self.dual_pane.active_explorer().current_dir.clone();
-        let shell = if cfg!(windows) { "cmd" } else { "sh" };
-        let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-        match std::process::Command::new(shell)
-            .arg(flag)
-            .arg(cmd)
-            .current_dir(&cwd)
-            .output()
-        {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let mut result = String::new();
-                if !stdout.is_empty() {
-                    result.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    if !result.is_empty() {
-                        result.push('\n');
-                    }
-                    result.push_str(&stderr);
-                }
-                if result.is_empty() {
-                    result = format!(
-                        "Command completed (exit code: {})",
-                        output.status.code().unwrap_or(-1)
-                    );
-                }
-                self.dialog = Some(Dialog::info(result));
-                self.dual_pane.left.refresh();
-                self.dual_pane.right.refresh();
-            }
-            Err(e) => {
-                self.dialog = Some(Dialog::error(format!("Failed to run command: {}", e)));
-            }
+        // Run as async shell command in the task window
+        if self.task.as_ref().map(|t| t.running).unwrap_or(false) {
+            // Already have a running task - show it instead of starting another
+            self.input_mode = InputMode::TaskOutput;
+            return;
         }
+
+        let cwd = self.dual_pane.active_explorer().current_dir.clone();
+        self.task = Some(TaskState::new(cmd));
+        self.input_mode = InputMode::TaskOutput;
+        let tx = self.action_tx.clone();
+        tokio::spawn(task::run_task(cmd.to_string(), cwd, tx));
     }
 
     fn save_session(&self) {

@@ -6,6 +6,7 @@ mod config;
 mod event;
 mod fs;
 mod logger;
+mod task;
 mod theme;
 mod tui;
 mod util;

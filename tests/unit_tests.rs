@@ -1649,6 +1649,235 @@ fn theme_color_display_name_indexed() {
     assert!(name.contains("gray"), "got: {}", name);
 }
 
+// ── TaskState unit tests ──────────────────────────────────────
+
+#[test]
+fn task_state_initial_values() {
+    let task = cpt::task::TaskState::new("echo hi");
+    assert_eq!(task.cmd, "echo hi");
+    assert!(task.lines.is_empty());
+    assert!(task.running);
+    assert_eq!(task.exit_code, None);
+    assert_eq!(task.scroll, 0);
+    assert!(task.auto_scroll);
+}
+
+#[test]
+fn task_state_push_line_appends_and_auto_scrolls() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.push_line("line 1".into());
+    task.push_line("line 2".into());
+    task.push_line("line 3".into());
+    assert_eq!(task.lines.len(), 3);
+    // auto_scroll is true, so scroll should track the last line
+    assert_eq!(task.scroll, 2);
+}
+
+#[test]
+fn task_state_push_line_no_auto_scroll_when_user_scrolled_up() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.push_line("line 1".into());
+    task.push_line("line 2".into());
+    task.scroll_up(); // user scrolled up, disables auto_scroll
+    assert!(!task.auto_scroll);
+    task.push_line("line 3".into());
+    // scroll should NOT have jumped to bottom
+    assert_eq!(task.scroll, 0);
+}
+
+#[test]
+fn task_state_push_line_caps_at_max() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    for i in 0..cpt::task::MAX_LINES + 5 {
+        task.push_line(format!("line {}", i));
+    }
+    assert_eq!(task.lines.len(), cpt::task::MAX_LINES);
+}
+
+#[test]
+fn task_state_scroll_up_disables_auto_scroll() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.push_line("a".into());
+    task.push_line("b".into());
+    assert!(task.auto_scroll);
+    task.scroll_up();
+    assert!(!task.auto_scroll);
+    assert_eq!(task.scroll, 0); // was at 1, saturating_sub gives 0
+}
+
+#[test]
+fn task_state_scroll_down_re_enables_auto_scroll_at_bottom() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.push_line("a".into());
+    task.push_line("b".into());
+    task.push_line("c".into());
+    task.scroll_up();
+    task.scroll_up();
+    assert!(!task.auto_scroll);
+    // scroll down past the bottom edge
+    task.scroll_down();
+    task.scroll_down();
+    task.scroll_down();
+    assert!(task.auto_scroll);
+}
+
+#[test]
+fn task_state_scroll_clamps_to_line_count() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.push_line("only".into());
+    task.scroll_down();
+    task.scroll_down();
+    task.scroll_down();
+    // Must not exceed lines.len() - 1
+    assert_eq!(task.scroll, 0);
+}
+
+#[test]
+fn task_state_finish_sets_state() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.finish(0);
+    assert!(!task.running);
+    assert_eq!(task.exit_code, Some(0));
+}
+
+#[test]
+fn task_state_exit_summary_while_running() {
+    let task = cpt::task::TaskState::new("cmd");
+    assert!(task.exit_summary().contains("running"));
+}
+
+#[test]
+fn task_state_exit_summary_success() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.finish(0);
+    assert_eq!(task.exit_summary(), "done");
+}
+
+#[test]
+fn task_state_exit_summary_nonzero() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    task.finish(2);
+    let summary = task.exit_summary();
+    assert!(summary.contains('2'), "expected exit code in: {}", summary);
+}
+
+// ── run_task integration tests ────────────────────────────────
+
+#[tokio::test]
+async fn run_task_captures_stdout_and_sends_complete() {
+    use cpt::action::Action;
+    use cpt::task::run_task;
+    use tokio::sync::mpsc;
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let cwd = std::env::current_dir().unwrap();
+
+    #[cfg(windows)]
+    let cmd = "echo hello_world".to_string();
+    #[cfg(not(windows))]
+    let cmd = "echo hello_world".to_string();
+
+    run_task(cmd, cwd, tx).await;
+
+    let mut lines: Vec<String> = vec![];
+    let mut exit_code: Option<i32> = None;
+    while let Ok(action) = rx.try_recv() {
+        match action {
+            Action::TaskLine(line) => lines.push(line),
+            Action::TaskComplete(code) => exit_code = Some(code),
+            _ => {}
+        }
+    }
+
+    assert!(
+        lines.iter().any(|l| l.trim().contains("hello_world")),
+        "expected 'hello_world' in output lines: {:?}",
+        lines
+    );
+    assert_eq!(exit_code, Some(0));
+}
+
+#[tokio::test]
+async fn run_task_nonzero_exit_code() {
+    use cpt::action::Action;
+    use cpt::task::run_task;
+    use tokio::sync::mpsc;
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let cwd = std::env::current_dir().unwrap();
+
+    #[cfg(windows)]
+    let cmd = "exit 1".to_string();
+    #[cfg(not(windows))]
+    let cmd = "exit 1".to_string();
+
+    run_task(cmd, cwd, tx).await;
+
+    let mut exit_code: Option<i32> = None;
+    while let Ok(action) = rx.try_recv() {
+        if let Action::TaskComplete(code) = action {
+            exit_code = Some(code);
+        }
+    }
+
+    // exit 1 through the shell gives exit code 1
+    assert_eq!(exit_code, Some(1));
+}
+
+#[tokio::test]
+async fn run_task_invalid_command_sends_error() {
+    use cpt::action::Action;
+    use cpt::task::run_task;
+    use tokio::sync::mpsc;
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    // Point to a non-existent working directory to trigger an error.
+    let bad_cwd = PathBuf::from("/nonexistent_dir_cpt_test_xyz");
+    run_task("echo hi".to_string(), bad_cwd, tx).await;
+
+    let mut got_error_or_complete = false;
+    while let Ok(action) = rx.try_recv() {
+        match action {
+            Action::TaskError(_) | Action::TaskComplete(_) => {
+                got_error_or_complete = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(got_error_or_complete, "expected TaskError or TaskComplete for bad cwd");
+}
+
+#[tokio::test]
+async fn run_task_captures_stderr() {
+    use cpt::action::Action;
+    use cpt::task::run_task;
+    use tokio::sync::mpsc;
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let cwd = std::env::current_dir().unwrap();
+
+    #[cfg(windows)]
+    let cmd = "echo stderr_test 1>&2".to_string();
+    #[cfg(not(windows))]
+    let cmd = "echo stderr_test >&2".to_string();
+
+    run_task(cmd, cwd, tx).await;
+
+    let mut lines: Vec<String> = vec![];
+    while let Ok(action) = rx.try_recv() {
+        if let Action::TaskLine(line) = action {
+            lines.push(line);
+        }
+    }
+
+    assert!(
+        lines.iter().any(|l| l.trim().contains("stderr_test")),
+        "expected 'stderr_test' in stderr lines: {:?}",
+        lines
+    );
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
