@@ -725,6 +725,7 @@ fn session_config_default() {
 
 // ── strip_unc_prefix ─────────────────────────────────────────
 
+#[cfg(windows)]
 #[test]
 fn strip_unc_prefix_removes_windows_prefix() {
     let path = PathBuf::from(r"\\?\C:\Users\test");

@@ -33,8 +33,6 @@ pub fn draw_command_bar(
                 Span::raw("Copy "),
                 Span::styled("F6", fkey_style),
                 Span::raw("Move "),
-                Span::styled("F7", fkey_style),
-                Span::raw("Mkdir "),
                 Span::styled("F8", fkey_style),
                 Span::raw("Del  "),
                 Span::styled("Ctrl+F", hint_style),
@@ -43,7 +41,7 @@ pub fn draw_command_bar(
                 Span::raw(":Switch  "),
                 Span::styled("Ctrl+T", hint_style),
                 Span::raw(":Theme  "),
-                Span::styled("q", hint_style),
+                Span::styled("Ctrl+Q", hint_style),
                 Span::raw(":Quit"),
             ];
             if let Some(t) = task {
@@ -65,6 +63,15 @@ pub fn draw_command_bar(
             Span::raw(":minimize  "),
             Span::styled("Esc/Enter", hint_style),
             Span::raw(":close"),
+        ]),
+        InputMode::CreateTypeChoice => Line::from(vec![
+            Span::styled("New: ", input_style),
+            Span::styled("[f]", fkey_style),
+            Span::raw("ile  "),
+            Span::styled("[d]", fkey_style),
+            Span::raw("ir   "),
+            Span::styled("Esc", hint_style),
+            Span::raw(":cancel"),
         ]),
         InputMode::Filter(text) => Line::from(vec![
             Span::styled("Filter: ", filter_style),

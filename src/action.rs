@@ -30,6 +30,7 @@ pub enum Action {
     Rename,
     MkDir,
     CreateFile,
+    CreateNew,
     Refresh,
     ConflictOverwrite,
     ConflictRename,

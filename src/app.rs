@@ -27,6 +27,7 @@ pub enum InputMode {
     Rename(String),
     MkDir(String),
     CreateFile(String),
+    CreateTypeChoice,
     Command(String),
     TaskOutput,
 }
@@ -177,6 +178,14 @@ impl App {
                     _ => Action::Noop,
                 };
             }
+            InputMode::CreateTypeChoice => {
+                return match key.code {
+                    KeyCode::Char('f') | KeyCode::Char('F') => Action::CreateFile,
+                    KeyCode::Char('d') | KeyCode::Char('D') => Action::MkDir,
+                    KeyCode::Esc => Action::InputCancel,
+                    _ => Action::Noop,
+                };
+            }
             InputMode::Rename(_) | InputMode::MkDir(_) | InputMode::CreateFile(_) => {
                 return match key.code {
                     KeyCode::Char(c) => Action::InputChar(c),
@@ -227,18 +236,16 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('z')) => Action::TaskRestore,
             (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
-            (KeyModifiers::NONE, KeyCode::F(4)) => Action::CreateFile,
+            (KeyModifiers::NONE, KeyCode::F(4)) => Action::CreateNew,
             (KeyModifiers::NONE, KeyCode::F(5)) => Action::CopySelected,
             (KeyModifiers::NONE, KeyCode::F(6)) => Action::MoveSelected,
-            (KeyModifiers::NONE, KeyCode::F(7)) => Action::MkDir,
             (KeyModifiers::NONE, KeyCode::F(8)) | (KeyModifiers::NONE, KeyCode::Delete) => {
                 Action::DeleteSelected
             }
             (KeyModifiers::CONTROL, KeyCode::Char('f')) => Action::StartFilter,
             (KeyModifiers::CONTROL, KeyCode::Char('t')) => Action::OpenThemeEditor,
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
-            (KeyModifiers::NONE, KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
+            (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
             (KeyModifiers::NONE, KeyCode::Esc) => Action::FilterCancel,
             (KeyModifiers::NONE, KeyCode::Char(c)) => Action::StartCommand(c),
             (KeyModifiers::SHIFT, KeyCode::Char(c)) => Action::StartCommand(c),
@@ -453,6 +460,9 @@ impl App {
                     self.input_mode = InputMode::Rename(entry.name.clone());
                 }
             }
+            Action::CreateNew => {
+                self.input_mode = InputMode::CreateTypeChoice;
+            }
             Action::MkDir => {
                 self.input_mode = InputMode::MkDir(String::new());
             }
@@ -604,15 +614,14 @@ impl App {
                      Ctrl+A - select/deselect all\n\
                      F1 - this help\n\
                      F2 - rename\n\
-                     F4 - create file\n\
+                     F4 - create new file or directory\n\
                      F5 - copy to other pane\n\
                      F6 - move to other pane\n\
-                     F7 - create directory\n\
                      F8/Del - delete\n\
                      Ctrl+F - quick filter\n\
                      Ctrl+T - theme editor\n\
                      Ctrl+R - refresh\n\
-                     q/Ctrl+Q - quit\n\
+                     Ctrl+Q - quit\n\
                      \n\
                      Type any character for command line (cd, shell commands)",
                 ));
@@ -1036,5 +1045,136 @@ impl App {
             theme_name: self.theme_name.clone(),
         };
         config.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+
+    fn make_app() -> App {
+        let dir = std::env::current_dir().unwrap();
+        App::new(dir.clone(), dir, PaneSide::Left, "default".to_string())
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    // ── Normal mode key mapping ───────────────────────────────
+
+    #[test]
+    fn f4_maps_to_create_new() {
+        let app = make_app();
+        assert!(matches!(app.map_key(key(KeyCode::F(4))), Action::CreateNew));
+    }
+
+    #[test]
+    fn f7_is_unbound_in_normal_mode() {
+        let app = make_app();
+        assert!(matches!(app.map_key(key(KeyCode::F(7))), Action::Noop));
+    }
+
+    #[test]
+    fn q_no_longer_quits() {
+        let app = make_app();
+        // 'q' now starts command mode (falls through to StartCommand)
+        let action = app.map_key(key(KeyCode::Char('q')));
+        assert!(!matches!(action, Action::Quit));
+    }
+
+    #[test]
+    fn ctrl_q_quits() {
+        let app = make_app();
+        assert!(matches!(app.map_key(ctrl('q')), Action::Quit));
+    }
+
+    // ── CreateTypeChoice mode ─────────────────────────────────
+
+    #[test]
+    fn create_type_choice_f_creates_file() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('f'))),
+            Action::CreateFile
+        ));
+    }
+
+    #[test]
+    fn create_type_choice_uppercase_f_creates_file() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('F'))),
+            Action::CreateFile
+        ));
+    }
+
+    #[test]
+    fn create_type_choice_d_creates_dir() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('d'))),
+            Action::MkDir
+        ));
+    }
+
+    #[test]
+    fn create_type_choice_uppercase_d_creates_dir() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('D'))),
+            Action::MkDir
+        ));
+    }
+
+    #[test]
+    fn create_type_choice_esc_cancels() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Esc)),
+            Action::InputCancel
+        ));
+    }
+
+    #[test]
+    fn create_type_choice_other_keys_noop() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        assert!(matches!(
+            app.map_key(key(KeyCode::Enter)),
+            Action::Noop
+        ));
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('x'))),
+            Action::Noop
+        ));
+    }
+
+    // ── Dispatch: CreateNew sets CreateTypeChoice mode ────────
+
+    #[test]
+    fn dispatch_create_new_enters_choice_mode() {
+        let mut app = make_app();
+        app.dispatch(Action::CreateNew);
+        assert!(matches!(app.input_mode, InputMode::CreateTypeChoice));
+    }
+
+    #[test]
+    fn dispatch_input_cancel_from_choice_returns_normal() {
+        let mut app = make_app();
+        app.input_mode = InputMode::CreateTypeChoice;
+        app.dispatch(Action::InputCancel);
+        assert!(matches!(app.input_mode, InputMode::Normal));
     }
 }
