@@ -6,7 +6,7 @@ Rust, Ratatui 0.30, Crossterm 0.29, Tokio 1, tokio-util 0.7
 ## Commands
 - Build: `cargo build`
 - Run: `cargo run`
-- Run with args: `cargo run -- <left-path> --right <right-path>`
+- Run with args: `cargo run -- <left-path> [right-path]`
 - Test: `cargo test`
 - Lint: `cargo clippy`
 - Format: `cargo fmt`

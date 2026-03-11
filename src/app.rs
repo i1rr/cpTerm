@@ -427,7 +427,11 @@ impl App {
             }
             Action::ShowHelp => {
                 self.dialog = Some(Dialog::info(
-                    "Shortcuts:\n\
+                    "(Up/Down to scroll this help)\n\
+                     \n\
+                     Usage: cpt [left-path] [right-path]\n\
+                     \n\
+                     Shortcuts:\n\
                      Up/Down - navigate\n\
                      Home/End - top/bottom\n\
                      PgUp/PgDn - page scroll\n\
@@ -445,7 +449,9 @@ impl App {
                      F8/Del - delete\n\
                      Ctrl+F - quick filter\n\
                      Ctrl+R - refresh\n\
-                     q/Ctrl+Q - quit",
+                     q/Ctrl+Q - quit\n\
+                     \n\
+                     Type any character for command line (cd, shell commands)",
                 ));
             }
             Action::Error(msg) => {
