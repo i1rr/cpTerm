@@ -14,6 +14,7 @@ use crate::config::{PaneSide, SessionConfig};
 use crate::event::{Event, EventHandler};
 use crate::fs::ops;
 use crate::tui;
+use crate::util::clean_canonicalize;
 
 #[derive(Debug, Clone)]
 pub enum InputMode {
@@ -468,6 +469,9 @@ impl App {
                 std::env::var("USERPROFILE")
                     .or_else(|_| std::env::var("HOME"))
                     .unwrap_or_else(|_| ".".to_string())
+            } else if path_str.len() == 2 && path_str.ends_with(':') {
+                // Bare drive letter like "c:" -> treat as "C:\"
+                format!("{}\\", path_str)
             } else {
                 path_str.to_string()
             };
@@ -478,7 +482,7 @@ impl App {
                 self.dual_pane.active_explorer().current_dir.join(&path_str)
             };
 
-            match std::fs::canonicalize(&target) {
+            match clean_canonicalize(&target) {
                 Ok(resolved) if resolved.is_dir() => {
                     let explorer = self.dual_pane.active_explorer_mut();
                     explorer.current_dir = resolved;

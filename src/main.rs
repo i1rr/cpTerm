@@ -42,5 +42,5 @@ async fn main() -> Result<()> {
 }
 
 fn canonicalize_or(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or(path)
+    util::clean_canonicalize(&path).unwrap_or(path)
 }

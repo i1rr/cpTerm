@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::util::strip_unc_prefix;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PaneSide {
     Left,
@@ -35,7 +37,10 @@ fn dirs_home() -> PathBuf {
 
 impl SessionConfig {
     pub fn load() -> Self {
-        confy::load("cpt", None).unwrap_or_default()
+        let mut config: Self = confy::load("cpt", None).unwrap_or_default();
+        config.left_dir = strip_unc_prefix(config.left_dir);
+        config.right_dir = strip_unc_prefix(config.right_dir);
+        config
     }
 
     pub fn save(&self) {
