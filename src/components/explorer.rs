@@ -205,23 +205,17 @@ impl Explorer {
                 None
             }
             Action::SelectAll => {
-                for &i in &self.filtered {
-                    self.selected.insert(i);
+                if self.selected.is_empty() {
+                    for &i in &self.filtered {
+                        self.selected.insert(i);
+                    }
+                } else {
+                    self.selected.clear();
                 }
                 None
             }
             Action::DeselectAll => {
                 self.selected.clear();
-                None
-            }
-            Action::InvertSelection => {
-                for &i in &self.filtered {
-                    if self.selected.contains(&i) {
-                        self.selected.remove(&i);
-                    } else {
-                        self.selected.insert(i);
-                    }
-                }
                 None
             }
             Action::ToggleHidden => {

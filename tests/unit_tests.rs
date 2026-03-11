@@ -434,16 +434,21 @@ fn explorer_selection() {
     // ToggleSelect also moves down
     assert_eq!(explorer.cursor, 2);
 
-    // Select all
+    // Ctrl+A with partial selection -> deselects all
+    explorer.handle_action(&cpt::action::Action::SelectAll);
+    assert_eq!(explorer.selected.len(), 0);
+
+    // Ctrl+A with nothing selected -> selects all
     explorer.handle_action(&cpt::action::Action::SelectAll);
     assert_eq!(explorer.selected.len(), 3);
 
-    // Invert (all selected -> none selected)
-    explorer.handle_action(&cpt::action::Action::InvertSelection);
+    // Ctrl+A again deselects all (toggle behavior)
+    explorer.handle_action(&cpt::action::Action::SelectAll);
     assert_eq!(explorer.selected.len(), 0);
 
-    // Select all, then deselect
+    // Select all, then deselect via DeselectAll
     explorer.handle_action(&cpt::action::Action::SelectAll);
+    assert_eq!(explorer.selected.len(), 3);
     explorer.handle_action(&cpt::action::Action::DeselectAll);
     assert_eq!(explorer.selected.len(), 0);
 

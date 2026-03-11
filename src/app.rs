@@ -119,6 +119,8 @@ impl App {
             return match key.code {
                 KeyCode::Enter => Action::ConfirmDialog,
                 KeyCode::Esc => Action::DismissDialog,
+                KeyCode::Up => Action::DialogScrollUp,
+                KeyCode::Down => Action::DialogScrollDown,
                 _ => Action::Noop,
             };
         }
@@ -161,7 +163,6 @@ impl App {
                 Action::ToggleSelect
             }
             (KeyModifiers::CONTROL, KeyCode::Char('a')) => Action::SelectAll,
-            (KeyModifiers::NONE, KeyCode::Char('*')) => Action::InvertSelection,
             (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
             (KeyModifiers::NONE, KeyCode::F(5)) => Action::CopySelected,
@@ -190,6 +191,16 @@ impl App {
             Action::Resize(_, _) => {}
             Action::DismissDialog => {
                 self.dialog = None;
+            }
+            Action::DialogScrollUp => {
+                if let Some(ref mut dialog) = self.dialog {
+                    dialog.scroll_up();
+                }
+            }
+            Action::DialogScrollDown => {
+                if let Some(ref mut dialog) = self.dialog {
+                    dialog.scroll_down();
+                }
             }
             Action::ConfirmDialog => {
                 if let Some(op) = self.pending_op.take() {
@@ -352,8 +363,7 @@ impl App {
                      Backspace - parent dir\n\
                      Tab - switch pane\n\
                      Space/Insert - toggle select\n\
-                     Ctrl+A - select all\n\
-                     * - invert selection\n\
+                     Ctrl+A - select/deselect all\n\
                      F1 - this help\n\
                      F2 - rename\n\
                      F5 - copy to other pane\n\

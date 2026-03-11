@@ -45,6 +45,8 @@ pub enum Action {
     ShowHelp,
     DismissDialog,
     ConfirmDialog,
+    DialogScrollUp,
+    DialogScrollDown,
     ToggleHidden,
     // Input mode
     InputChar(char),
