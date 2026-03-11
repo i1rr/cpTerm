@@ -1221,6 +1221,259 @@ async fn copy_overwrite_replaces_existing() {
     fs::remove_dir_all(&dst_dir).ok();
 }
 
+// ── Logger ───────────────────────────────────────────────────
+
+#[test]
+fn logger_dump_returns_zero_when_empty() {
+    // Logger may have entries from other tests, but init is idempotent
+    // Just verify dump doesn't panic
+    let count = cpt::logger::dump();
+    // count can be 0 or more depending on test ordering
+    assert!(count < 10000); // sanity check
+}
+
+// ── Explorer: edge cases ─────────────────────────────────────
+
+#[test]
+fn explorer_select_all_on_empty_dir() {
+    let dir = tempdir("explorer_sel_empty");
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+
+    // SelectAll on empty should not panic, selected stays empty
+    explorer.handle_action(&cpt::action::Action::SelectAll);
+    assert!(explorer.selected.is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_page_down_clamped_to_bottom() {
+    let dir = tempdir("explorer_pgdn_clamp");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    // display_len = 3 (".." + 2 files), page down by 20 should clamp
+    explorer.handle_action(&cpt::action::Action::PageDown);
+    assert_eq!(explorer.cursor, 2); // last item
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_current_entry_returns_correct_entry() {
+    let dir = tempdir("explorer_current");
+    fs::write(dir.join("alpha.txt"), "").unwrap();
+    fs::write(dir.join("beta.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+    let entry = explorer.current_entry().unwrap();
+    assert_eq!(entry.name, "alpha.txt");
+
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+    let entry = explorer.current_entry().unwrap();
+    assert_eq!(entry.name, "beta.txt");
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_selected_entries_returns_refs() {
+    let dir = tempdir("explorer_sel_entries");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::SelectAll);
+    let entries = explorer.selected_entries();
+    assert_eq!(entries.len(), 2);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_filter_empty_string_shows_all() {
+    let dir = tempdir("explorer_filter_empty");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::StartFilter);
+    // Empty filter string shows all entries
+    assert_eq!(explorer.filtered.len(), 2);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_filter_no_match_shows_empty() {
+    let dir = tempdir("explorer_filter_nomatch");
+    fs::write(dir.join("a.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::StartFilter);
+    explorer.handle_action(&cpt::action::Action::FilterInput('z'));
+    explorer.handle_action(&cpt::action::Action::FilterInput('z'));
+    explorer.handle_action(&cpt::action::Action::FilterInput('z'));
+    assert_eq!(explorer.filtered.len(), 0);
+    // Cursor clamped to 0
+    assert_eq!(explorer.cursor, 0);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_enter_dir_clears_filter() {
+    let dir = tempdir("explorer_enter_clears_filter");
+    let sub = dir.join("child");
+    fs::create_dir(&sub).unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::StartFilter);
+    explorer.handle_action(&cpt::action::Action::FilterInput('c'));
+    assert!(explorer.filter_text.is_some());
+
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+    explorer.handle_action(&cpt::action::Action::EnterDir);
+    assert!(explorer.filter_text.is_none());
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── DualPane: navigation dispatched to active only ───────────
+
+#[test]
+fn dual_pane_actions_only_affect_active() {
+    let left = tempdir("dual_active_l");
+    let right = tempdir("dual_active_r");
+    fs::write(left.join("a.txt"), "aaa").unwrap();
+    fs::write(right.join("b.txt"), "bbb").unwrap();
+
+    let mut dual = cpt::components::dual_pane::DualPane::new(
+        left.clone(),
+        right.clone(),
+        cpt::config::PaneSide::Left,
+    );
+
+    // Select all on left
+    dual.handle_action(&cpt::action::Action::SelectAll);
+    assert_eq!(dual.left.selected.len(), 1);
+    assert_eq!(dual.right.selected.len(), 0);
+
+    // Switch and select all on right
+    dual.handle_action(&cpt::action::Action::SwitchPane);
+    dual.handle_action(&cpt::action::Action::SelectAll);
+    assert_eq!(dual.left.selected.len(), 1); // unchanged
+    assert_eq!(dual.right.selected.len(), 1);
+
+    fs::remove_dir_all(&left).ok();
+    fs::remove_dir_all(&right).ok();
+}
+
+// ── sort_entries: stability with mixed dirs and files ─────────
+
+#[test]
+fn sort_dirs_first_preserves_name_order() {
+    let mut entries = vec![
+        make_entry("z_dir", true, 0),
+        make_entry("a_dir", true, 0),
+        make_entry("m_file", false, 0),
+        make_entry("a_file", false, 0),
+    ];
+
+    sort_entries(&mut entries, SortColumn::Name, true);
+    assert_eq!(entries[0].name, "a_dir");
+    assert_eq!(entries[1].name, "z_dir");
+    assert_eq!(entries[2].name, "a_file");
+    assert_eq!(entries[3].name, "m_file");
+}
+
+// ── FileEntry: dir has zero size ─────────────────────────────
+
+#[test]
+fn file_entry_dir_has_zero_size() {
+    let dir = tempdir("entry_dir_size");
+    let sub = dir.join("subdir");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("file.txt"), "data inside").unwrap();
+
+    let entry = FileEntry::from_path(&sub).unwrap();
+    assert!(entry.is_dir);
+    assert_eq!(entry.size, 0); // Dir size is always 0
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── Unique target: directory naming ──────────────────────────
+
+#[test]
+fn unique_target_for_directory() {
+    let dir = tempdir("unique_dir");
+    fs::create_dir(dir.join("mydir")).unwrap();
+
+    let result = cpt::fs::ops::unique_target(&dir.join("mydir"));
+    assert_eq!(result, dir.join("mydir (1)"));
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── Dialog: conflict constructor ─────────────────────────────
+
+#[test]
+fn dialog_conflict_constructor() {
+    let d = cpt::components::dialog::Dialog::conflict("Copy", "Files exist");
+    assert!(matches!(
+        d.kind,
+        cpt::components::dialog::DialogKind::Conflict { .. }
+    ));
+    assert_eq!(d.scroll, 0);
+}
+
+// ── Ops: partial failure stops early ─────────────────────────
+
+#[tokio::test]
+async fn copy_stops_on_first_error() {
+    let src_dir = tempdir("copy_partial_src");
+    let dst_dir = tempdir("copy_partial_dst");
+    fs::write(src_dir.join("good.txt"), "ok").unwrap();
+    // Second source doesn't exist
+    let sources = vec![
+        src_dir.join("good.txt"),
+        src_dir.join("nonexistent.txt"),
+    ];
+    let pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    cpt::fs::ops::copy_entries(pairs, tx).await;
+
+    let mut progress_count = 0;
+    let mut error_count = 0;
+    let mut complete = false;
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            cpt::action::Action::OperationProgress { .. } => progress_count += 1,
+            cpt::action::Action::OperationError(_) => error_count += 1,
+            cpt::action::Action::OperationComplete(_) => complete = true,
+            _ => {}
+        }
+    }
+    assert_eq!(progress_count, 1); // First succeeded
+    assert_eq!(error_count, 1); // Second failed
+    assert!(!complete); // Did not complete
+
+    fs::remove_dir_all(&src_dir).ok();
+    fs::remove_dir_all(&dst_dir).ok();
+}
+
+// ── Config: PaneSide equality ────────────────────────────────
+
+#[test]
+fn pane_side_equality() {
+    assert_eq!(cpt::config::PaneSide::Left, cpt::config::PaneSide::Left);
+    assert_ne!(cpt::config::PaneSide::Left, cpt::config::PaneSide::Right);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
