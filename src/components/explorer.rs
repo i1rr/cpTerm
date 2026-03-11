@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Row, Table, TableState};
 
 use crate::action::Action;
-use crate::fs::entry::{FileEntry, SortColumn, read_directory, sort_entries};
+use crate::fs::entry::{FileEntry, read_directory};
 use crate::util::{format_date, format_size};
 
 pub struct Explorer {
@@ -18,9 +18,6 @@ pub struct Explorer {
     pub cursor: usize,
     pub scroll_offset: usize,
     pub selected: HashSet<usize>,
-    pub sort_by: SortColumn,
-    pub sort_ascending: bool,
-    pub show_hidden: bool,
     pub filter_text: Option<String>,
 }
 
@@ -33,9 +30,6 @@ impl Explorer {
             cursor: 0,
             scroll_offset: 0,
             selected: HashSet::new(),
-            sort_by: SortColumn::Name,
-            sort_ascending: true,
-            show_hidden: true,
             filter_text: None,
         };
         explorer.refresh();
@@ -98,6 +92,7 @@ impl Explorer {
         self.filtered.get(self.cursor - 1).copied()
     }
 
+    #[allow(dead_code)]
     pub fn selected_entries(&self) -> Vec<&FileEntry> {
         self.selected
             .iter()

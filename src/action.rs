@@ -1,8 +1,8 @@
 /// All application actions (messages).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Action {
     Tick,
-    Render,
     Resize(u16, u16),
     Quit,
     // Navigation
@@ -22,7 +22,6 @@ pub enum Action {
     ToggleSelect,
     SelectAll,
     DeselectAll,
-    InvertSelection,
     // Operations
     CopySelected,
     MoveSelected,
@@ -50,7 +49,6 @@ pub enum Action {
     ConfirmDialog,
     DialogScrollUp,
     DialogScrollDown,
-    ToggleHidden,
     // Input mode
     InputChar(char),
     InputBackspace,

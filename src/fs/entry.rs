@@ -13,6 +13,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum SortColumn {
     Name,
     Size,
