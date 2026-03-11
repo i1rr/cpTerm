@@ -330,7 +330,7 @@ impl Explorer {
                 style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
             }
             if entry.is_hidden {
-                style = style.add_modifier(Modifier::ITALIC);
+                style = style.add_modifier(Modifier::DIM);
             }
             if is_selected {
                 style = style.bg(Color::Yellow).fg(Color::Black);
