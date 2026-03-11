@@ -9,6 +9,5 @@ pub struct Cli {
     pub path: Option<PathBuf>,
 
     /// Directory for the right pane
-    #[arg(short, long)]
     pub right: Option<PathBuf>,
 }
