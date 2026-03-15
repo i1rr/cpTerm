@@ -162,14 +162,15 @@ pub fn color_display_name(c: Color) -> String {
         Color::LightMagenta => "LightMagenta".into(),
         Color::LightCyan => "LightCyan".into(),
         Color::White => "White".into(),
-        Color::Indexed(n) if n < 232 => {
+        Color::Indexed(n) if n >= 16 && n < 232 => {
             let v = n - 16;
             let r = v / 36;
             let g = (v % 36) / 6;
             let b = v % 6;
             format!("{} ({}:{}:{})", n, r, g, b)
         }
-        Color::Indexed(n) => format!("{} (gray {})", n, n - 232),
+        Color::Indexed(n) if n >= 232 => format!("{} (gray {})", n, n - 232),
+        Color::Indexed(n) => format!("{}", n),
         Color::Rgb(r, g, b) => format!("#{:02X}{:02X}{:02X}", r, g, b),
         _ => "?".into(),
     }

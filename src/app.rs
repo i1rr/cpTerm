@@ -58,6 +58,10 @@ pub struct App {
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
     pending_op: Option<PendingOp>,
+    /// Path to open in $EDITOR after the next render cycle (requires TUI suspend).
+    pub editor_request: Option<PathBuf>,
+    /// Path to open in $PAGER after the next render cycle (requires TUI suspend).
+    pub viewer_request: Option<PathBuf>,
 }
 
 impl App {
@@ -83,6 +87,8 @@ impl App {
             action_tx,
             action_rx,
             pending_op: None,
+            editor_request: None,
+            viewer_request: None,
         }
     }
 
@@ -105,6 +111,23 @@ impl App {
                         self.dispatch(action);
                     }
                 }
+            }
+
+            // Handle editor/viewer requests - requires temporarily releasing the terminal.
+            if let Some(path) = self.editor_request.take() {
+                tui::suspend()?;
+                if let Err(msg) = crate::fs::open::open_in_editor(&path) {
+                    self.dialog = Some(Dialog::error(msg));
+                }
+                tui::resume(&mut terminal)?;
+                self.dual_pane.active_explorer_mut().refresh();
+            }
+            if let Some(path) = self.viewer_request.take() {
+                tui::suspend()?;
+                if let Err(msg) = crate::fs::open::open_in_viewer(&path) {
+                    self.dialog = Some(Dialog::error(msg));
+                }
+                tui::resume(&mut terminal)?;
             }
 
             if self.should_quit {
@@ -251,6 +274,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('z')) => Action::TaskRestore,
             (KeyModifiers::NONE, KeyCode::F(1)) => Action::ShowHelp,
             (KeyModifiers::NONE, KeyCode::F(2)) => Action::Rename,
+            (KeyModifiers::NONE, KeyCode::F(3)) => Action::ViewFile,
             (KeyModifiers::NONE, KeyCode::F(4)) => Action::CreateNew,
             (KeyModifiers::NONE, KeyCode::F(5)) => Action::CopySelected,
             (KeyModifiers::NONE, KeyCode::F(6)) => Action::MoveSelected,
@@ -263,6 +287,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
             (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
             (KeyModifiers::NONE, KeyCode::Esc) => Action::FilterCancel,
+            (KeyModifiers::SHIFT, KeyCode::Enter) => Action::OpenFile,
             (KeyModifiers::NONE, KeyCode::Char(c)) => Action::StartCommand(c),
             (KeyModifiers::SHIFT, KeyCode::Char(c)) => Action::StartCommand(c),
             _ => Action::Noop,
@@ -499,6 +524,40 @@ impl App {
                     if !entry.is_dir {
                         if let Err(msg) = crate::fs::open::open_file(&entry.path) {
                             self.dialog = Some(Dialog::error(msg));
+                        }
+                    }
+                }
+            }
+            Action::OpenEditor => {
+                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                    if !entry.is_dir {
+                        self.editor_request = Some(entry.path.clone());
+                    }
+                }
+            }
+            Action::ViewFile => {
+                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                    if !entry.is_dir {
+                        self.viewer_request = Some(entry.path.clone());
+                    }
+                }
+            }
+            Action::UnpackArchive => {
+                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                    if !entry.is_dir {
+                        let dest = self.dual_pane.inactive_dir();
+                        match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
+                            Ok(cmd) => {
+                                let cwd =
+                                    self.dual_pane.active_explorer().current_dir.clone();
+                                let tx = self.action_tx.clone();
+                                self.task = Some(TaskState::new(&cmd));
+                                self.input_mode = InputMode::TaskOutput;
+                                tokio::spawn(task::run_task(cmd, cwd, tx));
+                            }
+                            Err(msg) => {
+                                self.dialog = Some(Dialog::error(msg));
+                            }
                         }
                     }
                 }

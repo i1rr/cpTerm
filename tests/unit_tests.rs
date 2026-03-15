@@ -794,10 +794,10 @@ fn sort_by_date() {
     assert_eq!(entries[2].name, "old");
 }
 
-// ── Explorer: enter file returns OpenFile ────────────────────
+// ── Explorer: enter non-archive file returns OpenEditor ──────
 
 #[test]
-fn explorer_enter_on_file_returns_open() {
+fn explorer_enter_on_file_returns_open_editor() {
     let dir = tempdir("explorer_open_file");
     fs::write(dir.join("readme.txt"), "hi").unwrap();
 
@@ -805,7 +805,25 @@ fn explorer_enter_on_file_returns_open() {
     explorer.handle_action(&cpt::action::Action::MoveDown); // onto the file
 
     let result = explorer.handle_action(&cpt::action::Action::EnterDir);
-    assert!(matches!(result, Some(cpt::action::Action::OpenFile)));
+    assert!(matches!(result, Some(cpt::action::Action::OpenEditor)));
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_enter_on_archive_returns_unpack() {
+    let dir = tempdir("explorer_archive");
+    fs::write(dir.join("backup.zip"), "fake zip").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+
+    let result = explorer.handle_action(&cpt::action::Action::EnterDir);
+    assert!(
+        matches!(result, Some(cpt::action::Action::UnpackArchive)),
+        "expected UnpackArchive, got {:?}",
+        result
+    );
 
     fs::remove_dir_all(&dir).ok();
 }
@@ -1877,6 +1895,666 @@ async fn run_task_captures_stderr() {
         "expected 'stderr_test' in stderr lines: {:?}",
         lines
     );
+}
+
+// ── contrast_fg ───────────────────────────────────────────────
+
+#[test]
+fn contrast_fg_dark_named_colors_return_white() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Indices 0-6 and 8 are dark - should return white
+    assert_eq!(contrast_fg(0), Color::White, "index 0 (Black) should give White");
+    assert_eq!(contrast_fg(1), Color::White, "index 1 (Red) should give White");
+    assert_eq!(contrast_fg(4), Color::White, "index 4 (Blue) should give White");
+    assert_eq!(contrast_fg(8), Color::White, "index 8 (DarkGray) should give White");
+}
+
+#[test]
+fn contrast_fg_light_named_colors_return_black() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Indices 7 and 9-15 are light - should return black
+    assert_eq!(contrast_fg(7), Color::Black, "index 7 (Gray) should give Black");
+    assert_eq!(contrast_fg(15), Color::Black, "index 15 (White) should give Black");
+    assert_eq!(contrast_fg(11), Color::Black, "index 11 (LightYellow) should give Black");
+}
+
+#[test]
+fn contrast_fg_grayscale_boundary() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // 232-243 are dark grays - should return white
+    assert_eq!(contrast_fg(232), Color::White);
+    assert_eq!(contrast_fg(243), Color::White);
+    // 244-255 are light grays - should return black
+    assert_eq!(contrast_fg(244), Color::Black);
+    assert_eq!(contrast_fg(255), Color::Black);
+}
+
+#[test]
+fn contrast_fg_cube_dark_returns_white() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Index 16 = (0,0,0) in the 6x6x6 cube - very dark, should give white
+    assert_eq!(contrast_fg(16), Color::White);
+    // Index 17 = (0,0,1) - also dark
+    assert_eq!(contrast_fg(17), Color::White);
+}
+
+#[test]
+fn contrast_fg_cube_bright_returns_black() {
+    use cpt::theme::contrast_fg;
+    use ratatui::style::Color;
+    // Index 231 = (5,5,5) in the 6x6x6 cube - very bright, should give black
+    assert_eq!(contrast_fg(231), Color::Black);
+}
+
+// ── color_display_name edge cases ────────────────────────────
+
+#[test]
+fn color_display_name_indexed_low_does_not_panic() {
+    use cpt::theme::color_display_name;
+    use ratatui::style::Color;
+    // Color::Indexed(n) for n < 16 must not underflow or panic.
+    // These are not the same as the named variants (Color::Black != Color::Indexed(0)).
+    for n in 0u8..16 {
+        let name = color_display_name(Color::Indexed(n));
+        // Should contain the numeric index at minimum
+        assert!(
+            name.contains(&n.to_string()),
+            "display name for Indexed({}) should include the number, got: {}",
+            n,
+            name
+        );
+    }
+}
+
+#[test]
+fn color_display_name_rgb() {
+    use cpt::theme::color_display_name;
+    use ratatui::style::Color;
+    let name = color_display_name(Color::Rgb(255, 128, 0));
+    assert_eq!(name, "#FF8000");
+}
+
+// ── TaskState: cap removes oldest lines ──────────────────────
+
+#[test]
+fn task_state_push_line_caps_removes_oldest() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    // Fill to capacity
+    for i in 0..cpt::task::MAX_LINES {
+        task.push_line(format!("line {}", i));
+    }
+    assert_eq!(task.lines[0], "line 0");
+    assert_eq!(task.lines[cpt::task::MAX_LINES - 1], format!("line {}", cpt::task::MAX_LINES - 1));
+
+    // Push one more - line 0 should be evicted
+    task.push_line("new line".to_string());
+    assert_eq!(task.lines.len(), cpt::task::MAX_LINES);
+    assert_eq!(task.lines[0], "line 1", "oldest line should have been removed");
+    assert_eq!(task.lines[cpt::task::MAX_LINES - 1], "new line");
+}
+
+#[test]
+fn task_state_push_line_scroll_adjusts_when_capping_with_manual_scroll() {
+    let mut task = cpt::task::TaskState::new("cmd");
+    // Fill to capacity
+    for i in 0..cpt::task::MAX_LINES {
+        task.push_line(format!("line {}", i));
+    }
+    // Manually scroll to position 10 and disable auto_scroll
+    task.scroll = 10;
+    task.auto_scroll = false;
+
+    // Push one more line - scroll should decrement to compensate for removed line
+    task.push_line("extra".to_string());
+    assert_eq!(task.scroll, 9, "scroll should decrement when oldest line is removed");
+}
+
+// ── copy_entries progress message contains item count ─────────
+
+#[tokio::test]
+async fn copy_entries_complete_message_contains_count() {
+    use cpt::action::Action;
+
+    let src_dir = tempdir("copy_count_src");
+    let dst_dir = tempdir("copy_count_dst");
+    fs::write(src_dir.join("a.txt"), "a").unwrap();
+    fs::write(src_dir.join("b.txt"), "b").unwrap();
+    fs::write(src_dir.join("c.txt"), "c").unwrap();
+
+    let sources = vec![
+        src_dir.join("a.txt"),
+        src_dir.join("b.txt"),
+        src_dir.join("c.txt"),
+    ];
+    let pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    cpt::fs::ops::copy_entries(pairs, tx).await;
+
+    let mut complete_msg: Option<String> = None;
+    let mut last_done = 0u64;
+    while let Ok(action) = rx.try_recv() {
+        match action {
+            Action::OperationProgress { done, total } => {
+                assert_eq!(total, 3);
+                last_done = done;
+            }
+            Action::OperationComplete(msg) => complete_msg = Some(msg),
+            _ => {}
+        }
+    }
+    assert_eq!(last_done, 3, "final progress should report 3 items done");
+    let msg = complete_msg.expect("expected OperationComplete");
+    assert!(msg.contains('3'), "complete message should mention count: {}", msg);
+
+    fs::remove_dir_all(&src_dir).ok();
+    fs::remove_dir_all(&dst_dir).ok();
+}
+
+#[tokio::test]
+async fn delete_entries_complete_message_contains_count() {
+    use cpt::action::Action;
+
+    let dir = tempdir("delete_count");
+    fs::write(dir.join("x.txt"), "x").unwrap();
+    fs::write(dir.join("y.txt"), "y").unwrap();
+
+    let sources = vec![dir.join("x.txt"), dir.join("y.txt")];
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    cpt::fs::ops::delete_entries(sources, tx).await;
+
+    let mut complete_msg: Option<String> = None;
+    while let Ok(action) = rx.try_recv() {
+        if let Action::OperationComplete(msg) = action {
+            complete_msg = Some(msg);
+        }
+    }
+    let msg = complete_msg.expect("expected OperationComplete");
+    assert!(msg.contains('2'), "complete message should mention count: {}", msg);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── build_pairs edge cases ────────────────────────────────────
+
+#[test]
+fn build_pairs_empty_sources_returns_empty() {
+    let dest = PathBuf::from("/dest");
+    let pairs = cpt::fs::ops::build_pairs(&[], &dest);
+    assert!(pairs.is_empty());
+}
+
+#[test]
+fn find_conflicts_all_conflict() {
+    let dir = tempdir("all_conflicts");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let pairs = vec![
+        (PathBuf::from("/src/a.txt"), dir.join("a.txt")),
+        (PathBuf::from("/src/b.txt"), dir.join("b.txt")),
+    ];
+    let conflicts = cpt::fs::ops::find_conflicts(&pairs);
+    assert_eq!(conflicts, vec![0, 1]);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── is_archive ───────────────────────────────────────────────
+
+#[test]
+fn is_archive_detects_common_formats() {
+    use cpt::util::is_archive;
+    assert!(is_archive("archive.zip"));
+    assert!(is_archive("backup.7z"));
+    assert!(is_archive("data.rar"));
+    assert!(is_archive("dist.tar"));
+    assert!(is_archive("dist.tar.gz"));
+    assert!(is_archive("dist.tar.bz2"));
+    assert!(is_archive("dist.tar.xz"));
+    assert!(is_archive("dist.tgz"));
+    assert!(is_archive("dist.tbz2"));
+    assert!(is_archive("compressed.gz"));
+    assert!(is_archive("compressed.bz2"));
+    assert!(is_archive("compressed.xz"));
+}
+
+#[test]
+fn is_archive_case_insensitive() {
+    use cpt::util::is_archive;
+    assert!(is_archive("BACKUP.ZIP"));
+    assert!(is_archive("Archive.Zip"));
+    assert!(is_archive("DATA.TAR.GZ"));
+}
+
+#[test]
+fn is_archive_rejects_non_archives() {
+    use cpt::util::is_archive;
+    assert!(!is_archive("readme.txt"));
+    assert!(!is_archive("photo.jpg"));
+    assert!(!is_archive("main.rs"));
+    assert!(!is_archive("Cargo.toml"));
+    assert!(!is_archive("noextension"));
+    assert!(!is_archive("file.zip.bak")); // not ending in a supported ext
+}
+
+#[test]
+fn is_archive_empty_and_dot_names() {
+    use cpt::util::is_archive;
+    assert!(!is_archive(""));
+    // ".zip" ends with ".zip" so it is detected as an archive
+    assert!(is_archive(".zip"));
+    assert!(!is_archive(".hidden"));
+}
+
+// ── resolve_editor / resolve_pager ───────────────────────────
+
+#[test]
+fn resolve_editor_uses_editor_env() {
+    use cpt::fs::open::resolve_editor;
+    // Temporarily set $EDITOR to a known value
+    unsafe { std::env::set_var("EDITOR", "my_custom_editor"); }
+    let result = resolve_editor();
+    unsafe { std::env::remove_var("EDITOR"); }
+    assert_eq!(result, "my_custom_editor");
+}
+
+#[test]
+fn resolve_editor_falls_back_when_editor_empty() {
+    use cpt::fs::open::resolve_editor;
+    unsafe {
+        std::env::set_var("EDITOR", "");
+        std::env::set_var("VISUAL", "my_visual");
+    }
+    let result = resolve_editor();
+    unsafe {
+        std::env::remove_var("EDITOR");
+        std::env::remove_var("VISUAL");
+    }
+    assert_eq!(result, "my_visual");
+}
+
+#[test]
+fn resolve_editor_falls_back_to_system_default_when_both_empty() {
+    use cpt::fs::open::resolve_editor;
+    // Unset both - should fall back to nano/vi/notepad
+    let old_editor = std::env::var("EDITOR").ok();
+    let old_visual = std::env::var("VISUAL").ok();
+    unsafe {
+        std::env::remove_var("EDITOR");
+        std::env::remove_var("VISUAL");
+    }
+    let result = resolve_editor();
+    // Restore
+    unsafe {
+        if let Some(e) = old_editor { std::env::set_var("EDITOR", e); }
+        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+    }
+    // Should return nano, vi, or notepad - not empty
+    assert!(!result.is_empty());
+    #[cfg(windows)]
+    assert_eq!(result, "notepad");
+}
+
+#[test]
+fn resolve_pager_uses_pager_env() {
+    use cpt::fs::open::resolve_pager;
+    unsafe { std::env::set_var("PAGER", "my_pager"); }
+    let result = resolve_pager();
+    unsafe { std::env::remove_var("PAGER"); }
+    assert_eq!(result, "my_pager");
+}
+
+#[test]
+fn resolve_pager_falls_back_when_empty() {
+    use cpt::fs::open::resolve_pager;
+    let old = std::env::var("PAGER").ok();
+    unsafe { std::env::remove_var("PAGER"); }
+    let result = resolve_pager();
+    unsafe {
+        if let Some(p) = old { std::env::set_var("PAGER", p); }
+    }
+    #[cfg(windows)]
+    assert_eq!(result, "more");
+    #[cfg(not(windows))]
+    assert_eq!(result, "less");
+}
+
+// ── resolve_unpack_command ────────────────────────────────────
+
+#[test]
+fn resolve_unpack_tar_always_uses_tar() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let cases = [
+        "archive.tar",
+        "archive.tar.gz",
+        "archive.tgz",
+        "archive.tar.bz2",
+        "archive.tbz2",
+        "archive.tar.xz",
+    ];
+    for name in &cases {
+        let archive = PathBuf::from(format!("/src/{}", name));
+        let dest = PathBuf::from("/dest");
+        let cmd = resolve_unpack_command(&archive, &dest).unwrap_or_else(|e| {
+            panic!("{} should resolve, got: {}", name, e)
+        });
+        assert!(
+            cmd.starts_with("tar -xf"),
+            "{} should use tar, got: {}",
+            name,
+            cmd
+        );
+        assert!(cmd.contains("/dest"), "command should reference dest: {}", cmd);
+    }
+}
+
+#[test]
+fn resolve_unpack_zip_on_current_os() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/files.zip");
+    let dest = PathBuf::from("/dest");
+    let result = resolve_unpack_command(&archive, &dest);
+    // On Linux/macOS: unzip or 7z. On Windows: tar.
+    // Either way it should succeed on a typical dev machine.
+    match result {
+        Ok(cmd) => {
+            #[cfg(windows)]
+            assert!(cmd.starts_with("tar"), "Windows ZIP should use tar: {}", cmd);
+            #[cfg(not(windows))]
+            assert!(
+                cmd.contains("unzip") || cmd.contains("7z") || cmd.contains("7za"),
+                "Unix ZIP should use unzip or 7z, got: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            // Acceptable only if truly no tool is available
+            assert!(
+                e.contains("unzip") || e.contains("7z"),
+                "error message should name the missing tool: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_7z_returns_err_or_7z_command() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/data.7z");
+    let dest = PathBuf::from("/dest");
+    match resolve_unpack_command(&archive, &dest) {
+        Ok(cmd) => {
+            assert!(
+                cmd.contains("7z") || cmd.contains("7za") || cmd.contains("7zz"),
+                "should use a 7z binary: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            assert!(
+                e.contains("7z") || e.contains("7-Zip"),
+                "error should mention 7z: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_rar_returns_err_or_unrar_or_7z() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/archive.rar");
+    let dest = PathBuf::from("/dest");
+    match resolve_unpack_command(&archive, &dest) {
+        Ok(cmd) => {
+            assert!(
+                cmd.contains("unrar") || cmd.contains("7z"),
+                "should use unrar or 7z: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            assert!(
+                e.contains("unrar") || e.contains("7z"),
+                "error should name the missing tool: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_unknown_format_returns_err() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/file.docx");
+    let dest = PathBuf::from("/dest");
+    let result = resolve_unpack_command(&archive, &dest);
+    assert!(result.is_err(), "unsupported format should return Err");
+    assert!(
+        result.unwrap_err().contains("unsupported"),
+        "error should say unsupported"
+    );
+}
+
+#[test]
+fn resolve_unpack_command_embeds_paths() {
+    use cpt::fs::archive::resolve_unpack_command;
+    // TAR always uses tar so we can predict the command reliably
+    let archive = PathBuf::from("/my/archive.tar");
+    let dest = PathBuf::from("/my/dest dir");
+    let cmd = resolve_unpack_command(&archive, &dest).unwrap();
+    assert!(
+        cmd.contains("archive.tar"),
+        "command should contain archive name: {}",
+        cmd
+    );
+    assert!(
+        cmd.contains("dest dir"),
+        "command should contain dest path: {}",
+        cmd
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn shell_quote_wraps_in_single_quotes() {
+    use cpt::fs::archive::shell_quote;
+    let p = PathBuf::from("/path/to/my file.txt");
+    let q = shell_quote(&p);
+    assert!(q.starts_with('\''));
+    assert!(q.ends_with('\''));
+    assert!(q.contains("my file.txt"));
+}
+
+#[cfg(not(windows))]
+#[test]
+fn shell_quote_escapes_single_quotes_in_path() {
+    use cpt::fs::archive::shell_quote;
+    let p = PathBuf::from("/path/it's here/file.txt");
+    let q = shell_quote(&p);
+    // Should not contain a bare single quote inside the outer quotes
+    // The inner ' must be escaped as '\''
+    assert!(q.contains("'\\''"), "single quote should be escaped: {}", q);
+}
+
+// ── find_sevenzip ─────────────────────────────────────────────
+
+#[test]
+fn find_sevenzip_returns_option() {
+    // Just verify it doesn't panic and returns a valid-looking result.
+    let result = cpt::util::find_sevenzip();
+    if let Some(bin) = &result {
+        assert!(!bin.is_empty());
+        assert!(bin == "7z" || bin == "7za" || bin == "7zz");
+    }
+    // None is also acceptable if 7z isn't installed in the test env.
+    let _ = result;
+}
+
+// ── Explorer: archive extension variants ─────────────────────
+
+#[test]
+fn explorer_enter_on_various_archive_extensions() {
+    use cpt::action::Action;
+
+    let dir = tempdir("explorer_archive_variants");
+    let archives = ["a.zip", "b.7z", "c.tar.gz", "d.tgz", "e.rar"];
+    for name in &archives {
+        fs::write(dir.join(name), b"fake").unwrap();
+    }
+
+    for name in &archives {
+        let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+        // Navigate down until we find the target entry (skip ".." at cursor 0)
+        let mut found = false;
+        for _ in 0..50 {
+            explorer.handle_action(&Action::MoveDown);
+            if explorer.current_entry().map(|e| e.name == *name).unwrap_or(false) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "could not find {} in explorer", name);
+
+        let result = explorer.handle_action(&Action::EnterDir);
+        assert!(
+            matches!(result, Some(Action::UnpackArchive)),
+            "{} should trigger UnpackArchive, got {:?}",
+            name,
+            result
+        );
+    }
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── Theme file I/O ────────────────────────────────────────────
+
+#[test]
+fn theme_themes_dir_returns_some() {
+    // themes_dir() uses confy to locate the config dir - should succeed on all platforms
+    let dir = cpt::theme::Theme::themes_dir();
+    assert!(dir.is_some(), "themes_dir should return Some on a normal system");
+    let dir = dir.unwrap();
+    // The last component should be "themes"
+    assert_eq!(
+        dir.file_name().and_then(|n| n.to_str()),
+        Some("themes"),
+        "themes dir should end with 'themes', got: {}",
+        dir.display()
+    );
+}
+
+#[test]
+fn theme_save_to_file_and_delete_file() {
+    // Use a unique name unlikely to clash with real themes
+    let name = "cpt-test-temp-delete-me";
+
+    // Save a modified theme
+    let mut theme = cpt::theme::Theme::default();
+    theme.set_field(0, ratatui::style::Color::Indexed(42));
+
+    let save_result = theme.save_to_file(name);
+    assert!(save_result.is_ok(), "save_to_file failed: {:?}", save_result.err());
+
+    let saved_path = save_result.unwrap();
+    assert!(saved_path.exists(), "saved theme file should exist at {}", saved_path.display());
+
+    // Verify content roundtrips
+    let content = fs::read_to_string(&saved_path).unwrap();
+    let loaded: cpt::theme::Theme = toml::from_str(&content).unwrap();
+    assert_eq!(
+        format!("{:?}", loaded.get_field(0)),
+        format!("{:?}", ratatui::style::Color::Indexed(42)),
+        "loaded theme field 0 should match saved value"
+    );
+
+    // Delete the file
+    let delete_result = cpt::theme::Theme::delete_file(name);
+    assert!(delete_result.is_ok(), "delete_file failed: {:?}", delete_result.err());
+    assert!(!saved_path.exists(), "theme file should be deleted");
+}
+
+#[test]
+fn theme_delete_file_nonexistent_returns_ok() {
+    // Deleting a theme that doesn't exist should return Ok (idempotent)
+    let result = cpt::theme::Theme::delete_file("cpt-test-nonexistent-theme-xyz");
+    assert!(result.is_ok(), "delete_file on nonexistent should return Ok: {:?}", result.err());
+}
+
+// ── open_in_editor / open_in_viewer ───────────────────────────
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_editor_with_true_command() {
+    use cpt::fs::open::open_in_editor;
+    // Set EDITOR to "true" - exits 0 immediately without doing anything
+    let old = std::env::var("EDITOR").ok();
+    unsafe { std::env::set_var("EDITOR", "true"); }
+    let dir = tempdir("open_editor_test");
+    let file = dir.join("test.txt");
+    fs::write(&file, "content").unwrap();
+    let result = open_in_editor(&file);
+    unsafe {
+        match old {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+    }
+    assert!(result.is_ok(), "open_in_editor with EDITOR=true should succeed: {:?}", result.err());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_viewer_with_true_command() {
+    use cpt::fs::open::open_in_viewer;
+    let old = std::env::var("PAGER").ok();
+    unsafe { std::env::set_var("PAGER", "true"); }
+    let dir = tempdir("open_viewer_test");
+    let file = dir.join("test.txt");
+    fs::write(&file, "content").unwrap();
+    let result = open_in_viewer(&file);
+    unsafe {
+        match old {
+            Some(v) => std::env::set_var("PAGER", v),
+            None => std::env::remove_var("PAGER"),
+        }
+    }
+    assert!(result.is_ok(), "open_in_viewer with PAGER=true should succeed: {:?}", result.err());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_editor_missing_binary_returns_err() {
+    use cpt::fs::open::open_in_editor;
+    let old_editor = std::env::var("EDITOR").ok();
+    let old_visual = std::env::var("VISUAL").ok();
+    unsafe {
+        std::env::set_var("EDITOR", "/nonexistent_binary_cpt_xyz_abc");
+        std::env::remove_var("VISUAL");
+    }
+    let dir = tempdir("open_editor_err");
+    let file = dir.join("f.txt");
+    fs::write(&file, "").unwrap();
+    let result = open_in_editor(&file);
+    unsafe {
+        match old_editor {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+    }
+    assert!(result.is_err(), "open_in_editor with nonexistent binary should return Err");
+    fs::remove_dir_all(&dir).ok();
 }
 
 // ── Helpers ──────────────────────────────────────────────────
