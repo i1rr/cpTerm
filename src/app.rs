@@ -20,7 +20,7 @@ use crate::fs::ops;
 use crate::task::{self, TaskState};
 use crate::theme::Theme;
 use crate::tui;
-use crate::util::{clean_canonicalize, find_sevenzip};
+use crate::util::clean_canonicalize;
 
 #[derive(Debug, Clone)]
 pub enum InputMode {
@@ -62,8 +62,6 @@ pub struct App {
     pub editor_request: Option<PathBuf>,
     /// Path to open in $PAGER after the next render cycle (requires TUI suspend).
     pub viewer_request: Option<PathBuf>,
-    /// 7z binary name if found on PATH, None otherwise.
-    pub sevenzip_bin: Option<String>,
 }
 
 impl App {
@@ -91,7 +89,6 @@ impl App {
             pending_op: None,
             editor_request: None,
             viewer_request: None,
-            sevenzip_bin: find_sevenzip(),
         }
     }
 
@@ -548,25 +545,18 @@ impl App {
             Action::UnpackArchive => {
                 if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
                     if !entry.is_dir {
-                        match &self.sevenzip_bin {
-                            None => {
-                                self.dialog = Some(Dialog::error(
-                                    "7z not found on PATH - install 7-Zip to unpack archives",
-                                ));
-                            }
-                            Some(bin) => {
-                                let dest = self.dual_pane.inactive_dir();
-                                let cmd = format!(
-                                    "{} x {:?} -o{:?}",
-                                    bin,
-                                    entry.path,
-                                    dest,
-                                );
-                                let cwd = self.dual_pane.active_explorer().current_dir.clone();
+                        let dest = self.dual_pane.inactive_dir();
+                        match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
+                            Ok(cmd) => {
+                                let cwd =
+                                    self.dual_pane.active_explorer().current_dir.clone();
                                 let tx = self.action_tx.clone();
                                 self.task = Some(TaskState::new(&cmd));
                                 self.input_mode = InputMode::TaskOutput;
                                 tokio::spawn(task::run_task(cmd, cwd, tx));
+                            }
+                            Err(msg) => {
+                                self.dialog = Some(Dialog::error(msg));
                             }
                         }
                     }

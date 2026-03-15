@@ -2225,6 +2225,165 @@ fn resolve_pager_falls_back_when_empty() {
     assert_eq!(result, "less");
 }
 
+// ── resolve_unpack_command ────────────────────────────────────
+
+#[test]
+fn resolve_unpack_tar_always_uses_tar() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let cases = [
+        "archive.tar",
+        "archive.tar.gz",
+        "archive.tgz",
+        "archive.tar.bz2",
+        "archive.tbz2",
+        "archive.tar.xz",
+    ];
+    for name in &cases {
+        let archive = PathBuf::from(format!("/src/{}", name));
+        let dest = PathBuf::from("/dest");
+        let cmd = resolve_unpack_command(&archive, &dest).unwrap_or_else(|e| {
+            panic!("{} should resolve, got: {}", name, e)
+        });
+        assert!(
+            cmd.starts_with("tar -xf"),
+            "{} should use tar, got: {}",
+            name,
+            cmd
+        );
+        assert!(cmd.contains("/dest"), "command should reference dest: {}", cmd);
+    }
+}
+
+#[test]
+fn resolve_unpack_zip_on_current_os() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/files.zip");
+    let dest = PathBuf::from("/dest");
+    let result = resolve_unpack_command(&archive, &dest);
+    // On Linux/macOS: unzip or 7z. On Windows: tar.
+    // Either way it should succeed on a typical dev machine.
+    match result {
+        Ok(cmd) => {
+            #[cfg(windows)]
+            assert!(cmd.starts_with("tar"), "Windows ZIP should use tar: {}", cmd);
+            #[cfg(not(windows))]
+            assert!(
+                cmd.contains("unzip") || cmd.contains("7z") || cmd.contains("7za"),
+                "Unix ZIP should use unzip or 7z, got: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            // Acceptable only if truly no tool is available
+            assert!(
+                e.contains("unzip") || e.contains("7z"),
+                "error message should name the missing tool: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_7z_returns_err_or_7z_command() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/data.7z");
+    let dest = PathBuf::from("/dest");
+    match resolve_unpack_command(&archive, &dest) {
+        Ok(cmd) => {
+            assert!(
+                cmd.contains("7z") || cmd.contains("7za") || cmd.contains("7zz"),
+                "should use a 7z binary: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            assert!(
+                e.contains("7z") || e.contains("7-Zip"),
+                "error should mention 7z: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_rar_returns_err_or_unrar_or_7z() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/archive.rar");
+    let dest = PathBuf::from("/dest");
+    match resolve_unpack_command(&archive, &dest) {
+        Ok(cmd) => {
+            assert!(
+                cmd.contains("unrar") || cmd.contains("7z"),
+                "should use unrar or 7z: {}",
+                cmd
+            );
+        }
+        Err(e) => {
+            assert!(
+                e.contains("unrar") || e.contains("7z"),
+                "error should name the missing tool: {}",
+                e
+            );
+        }
+    }
+}
+
+#[test]
+fn resolve_unpack_unknown_format_returns_err() {
+    use cpt::fs::archive::resolve_unpack_command;
+    let archive = PathBuf::from("/src/file.docx");
+    let dest = PathBuf::from("/dest");
+    let result = resolve_unpack_command(&archive, &dest);
+    assert!(result.is_err(), "unsupported format should return Err");
+    assert!(
+        result.unwrap_err().contains("unsupported"),
+        "error should say unsupported"
+    );
+}
+
+#[test]
+fn resolve_unpack_command_embeds_paths() {
+    use cpt::fs::archive::resolve_unpack_command;
+    // TAR always uses tar so we can predict the command reliably
+    let archive = PathBuf::from("/my/archive.tar");
+    let dest = PathBuf::from("/my/dest dir");
+    let cmd = resolve_unpack_command(&archive, &dest).unwrap();
+    assert!(
+        cmd.contains("archive.tar"),
+        "command should contain archive name: {}",
+        cmd
+    );
+    assert!(
+        cmd.contains("dest dir"),
+        "command should contain dest path: {}",
+        cmd
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn shell_quote_wraps_in_single_quotes() {
+    use cpt::fs::archive::shell_quote;
+    let p = PathBuf::from("/path/to/my file.txt");
+    let q = shell_quote(&p);
+    assert!(q.starts_with('\''));
+    assert!(q.ends_with('\''));
+    assert!(q.contains("my file.txt"));
+}
+
+#[cfg(not(windows))]
+#[test]
+fn shell_quote_escapes_single_quotes_in_path() {
+    use cpt::fs::archive::shell_quote;
+    let p = PathBuf::from("/path/it's here/file.txt");
+    let q = shell_quote(&p);
+    // Should not contain a bare single quote inside the outer quotes
+    // The inner ' must be escaped as '\''
+    assert!(q.contains("'\\''"), "single quote should be escaped: {}", q);
+}
+
 // ── find_sevenzip ─────────────────────────────────────────────
 
 #[test]
