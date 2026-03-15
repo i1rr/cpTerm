@@ -2435,6 +2435,128 @@ fn explorer_enter_on_various_archive_extensions() {
     fs::remove_dir_all(&dir).ok();
 }
 
+// ── Theme file I/O ────────────────────────────────────────────
+
+#[test]
+fn theme_themes_dir_returns_some() {
+    // themes_dir() uses confy to locate the config dir - should succeed on all platforms
+    let dir = cpt::theme::Theme::themes_dir();
+    assert!(dir.is_some(), "themes_dir should return Some on a normal system");
+    let dir = dir.unwrap();
+    // The last component should be "themes"
+    assert_eq!(
+        dir.file_name().and_then(|n| n.to_str()),
+        Some("themes"),
+        "themes dir should end with 'themes', got: {}",
+        dir.display()
+    );
+}
+
+#[test]
+fn theme_save_to_file_and_delete_file() {
+    // Use a unique name unlikely to clash with real themes
+    let name = "cpt-test-temp-delete-me";
+
+    // Save a modified theme
+    let mut theme = cpt::theme::Theme::default();
+    theme.set_field(0, ratatui::style::Color::Indexed(42));
+
+    let save_result = theme.save_to_file(name);
+    assert!(save_result.is_ok(), "save_to_file failed: {:?}", save_result.err());
+
+    let saved_path = save_result.unwrap();
+    assert!(saved_path.exists(), "saved theme file should exist at {}", saved_path.display());
+
+    // Verify content roundtrips
+    let content = fs::read_to_string(&saved_path).unwrap();
+    let loaded: cpt::theme::Theme = toml::from_str(&content).unwrap();
+    assert_eq!(
+        format!("{:?}", loaded.get_field(0)),
+        format!("{:?}", ratatui::style::Color::Indexed(42)),
+        "loaded theme field 0 should match saved value"
+    );
+
+    // Delete the file
+    let delete_result = cpt::theme::Theme::delete_file(name);
+    assert!(delete_result.is_ok(), "delete_file failed: {:?}", delete_result.err());
+    assert!(!saved_path.exists(), "theme file should be deleted");
+}
+
+#[test]
+fn theme_delete_file_nonexistent_returns_ok() {
+    // Deleting a theme that doesn't exist should return Ok (idempotent)
+    let result = cpt::theme::Theme::delete_file("cpt-test-nonexistent-theme-xyz");
+    assert!(result.is_ok(), "delete_file on nonexistent should return Ok: {:?}", result.err());
+}
+
+// ── open_in_editor / open_in_viewer ───────────────────────────
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_editor_with_true_command() {
+    use cpt::fs::open::open_in_editor;
+    // Set EDITOR to "true" - exits 0 immediately without doing anything
+    let old = std::env::var("EDITOR").ok();
+    unsafe { std::env::set_var("EDITOR", "true"); }
+    let dir = tempdir("open_editor_test");
+    let file = dir.join("test.txt");
+    fs::write(&file, "content").unwrap();
+    let result = open_in_editor(&file);
+    unsafe {
+        match old {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+    }
+    assert!(result.is_ok(), "open_in_editor with EDITOR=true should succeed: {:?}", result.err());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_viewer_with_true_command() {
+    use cpt::fs::open::open_in_viewer;
+    let old = std::env::var("PAGER").ok();
+    unsafe { std::env::set_var("PAGER", "true"); }
+    let dir = tempdir("open_viewer_test");
+    let file = dir.join("test.txt");
+    fs::write(&file, "content").unwrap();
+    let result = open_in_viewer(&file);
+    unsafe {
+        match old {
+            Some(v) => std::env::set_var("PAGER", v),
+            None => std::env::remove_var("PAGER"),
+        }
+    }
+    assert!(result.is_ok(), "open_in_viewer with PAGER=true should succeed: {:?}", result.err());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn open_in_editor_missing_binary_returns_err() {
+    use cpt::fs::open::open_in_editor;
+    let old_editor = std::env::var("EDITOR").ok();
+    let old_visual = std::env::var("VISUAL").ok();
+    unsafe {
+        std::env::set_var("EDITOR", "/nonexistent_binary_cpt_xyz_abc");
+        std::env::remove_var("VISUAL");
+    }
+    let dir = tempdir("open_editor_err");
+    let file = dir.join("f.txt");
+    fs::write(&file, "").unwrap();
+    let result = open_in_editor(&file);
+    unsafe {
+        match old_editor {
+            Some(v) => std::env::set_var("EDITOR", v),
+            None => std::env::remove_var("EDITOR"),
+        }
+        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+    }
+    assert!(result.is_err(), "open_in_editor with nonexistent binary should return Err");
+    fs::remove_dir_all(&dir).ok();
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
