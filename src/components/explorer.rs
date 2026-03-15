@@ -158,8 +158,10 @@ impl Explorer {
                         self.filter_text = None;
                         self.cursor = 0;
                         self.refresh();
+                    } else if crate::util::is_archive(&entry.name) {
+                        return Some(Action::UnpackArchive);
                     } else {
-                        return Some(Action::OpenFile);
+                        return Some(Action::OpenEditor);
                     }
                 }
                 None

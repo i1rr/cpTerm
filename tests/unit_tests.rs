@@ -794,10 +794,10 @@ fn sort_by_date() {
     assert_eq!(entries[2].name, "old");
 }
 
-// ── Explorer: enter file returns OpenFile ────────────────────
+// ── Explorer: enter non-archive file returns OpenEditor ──────
 
 #[test]
-fn explorer_enter_on_file_returns_open() {
+fn explorer_enter_on_file_returns_open_editor() {
     let dir = tempdir("explorer_open_file");
     fs::write(dir.join("readme.txt"), "hi").unwrap();
 
@@ -805,7 +805,25 @@ fn explorer_enter_on_file_returns_open() {
     explorer.handle_action(&cpt::action::Action::MoveDown); // onto the file
 
     let result = explorer.handle_action(&cpt::action::Action::EnterDir);
-    assert!(matches!(result, Some(cpt::action::Action::OpenFile)));
+    assert!(matches!(result, Some(cpt::action::Action::OpenEditor)));
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_enter_on_archive_returns_unpack() {
+    let dir = tempdir("explorer_archive");
+    fs::write(dir.join("backup.zip"), "fake zip").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+
+    let result = explorer.handle_action(&cpt::action::Action::EnterDir);
+    assert!(
+        matches!(result, Some(cpt::action::Action::UnpackArchive)),
+        "expected UnpackArchive, got {:?}",
+        result
+    );
 
     fs::remove_dir_all(&dir).ok();
 }
@@ -2083,6 +2101,177 @@ fn find_conflicts_all_conflict() {
     ];
     let conflicts = cpt::fs::ops::find_conflicts(&pairs);
     assert_eq!(conflicts, vec![0, 1]);
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── is_archive ───────────────────────────────────────────────
+
+#[test]
+fn is_archive_detects_common_formats() {
+    use cpt::util::is_archive;
+    assert!(is_archive("archive.zip"));
+    assert!(is_archive("backup.7z"));
+    assert!(is_archive("data.rar"));
+    assert!(is_archive("dist.tar"));
+    assert!(is_archive("dist.tar.gz"));
+    assert!(is_archive("dist.tar.bz2"));
+    assert!(is_archive("dist.tar.xz"));
+    assert!(is_archive("dist.tgz"));
+    assert!(is_archive("dist.tbz2"));
+    assert!(is_archive("compressed.gz"));
+    assert!(is_archive("compressed.bz2"));
+    assert!(is_archive("compressed.xz"));
+}
+
+#[test]
+fn is_archive_case_insensitive() {
+    use cpt::util::is_archive;
+    assert!(is_archive("BACKUP.ZIP"));
+    assert!(is_archive("Archive.Zip"));
+    assert!(is_archive("DATA.TAR.GZ"));
+}
+
+#[test]
+fn is_archive_rejects_non_archives() {
+    use cpt::util::is_archive;
+    assert!(!is_archive("readme.txt"));
+    assert!(!is_archive("photo.jpg"));
+    assert!(!is_archive("main.rs"));
+    assert!(!is_archive("Cargo.toml"));
+    assert!(!is_archive("noextension"));
+    assert!(!is_archive("file.zip.bak")); // not ending in a supported ext
+}
+
+#[test]
+fn is_archive_empty_and_dot_names() {
+    use cpt::util::is_archive;
+    assert!(!is_archive(""));
+    // ".zip" ends with ".zip" so it is detected as an archive
+    assert!(is_archive(".zip"));
+    assert!(!is_archive(".hidden"));
+}
+
+// ── resolve_editor / resolve_pager ───────────────────────────
+
+#[test]
+fn resolve_editor_uses_editor_env() {
+    use cpt::fs::open::resolve_editor;
+    // Temporarily set $EDITOR to a known value
+    unsafe { std::env::set_var("EDITOR", "my_custom_editor"); }
+    let result = resolve_editor();
+    unsafe { std::env::remove_var("EDITOR"); }
+    assert_eq!(result, "my_custom_editor");
+}
+
+#[test]
+fn resolve_editor_falls_back_when_editor_empty() {
+    use cpt::fs::open::resolve_editor;
+    unsafe {
+        std::env::set_var("EDITOR", "");
+        std::env::set_var("VISUAL", "my_visual");
+    }
+    let result = resolve_editor();
+    unsafe {
+        std::env::remove_var("EDITOR");
+        std::env::remove_var("VISUAL");
+    }
+    assert_eq!(result, "my_visual");
+}
+
+#[test]
+fn resolve_editor_falls_back_to_system_default_when_both_empty() {
+    use cpt::fs::open::resolve_editor;
+    // Unset both - should fall back to nano/vi/notepad
+    let old_editor = std::env::var("EDITOR").ok();
+    let old_visual = std::env::var("VISUAL").ok();
+    unsafe {
+        std::env::remove_var("EDITOR");
+        std::env::remove_var("VISUAL");
+    }
+    let result = resolve_editor();
+    // Restore
+    unsafe {
+        if let Some(e) = old_editor { std::env::set_var("EDITOR", e); }
+        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+    }
+    // Should return nano, vi, or notepad - not empty
+    assert!(!result.is_empty());
+    #[cfg(windows)]
+    assert_eq!(result, "notepad");
+}
+
+#[test]
+fn resolve_pager_uses_pager_env() {
+    use cpt::fs::open::resolve_pager;
+    unsafe { std::env::set_var("PAGER", "my_pager"); }
+    let result = resolve_pager();
+    unsafe { std::env::remove_var("PAGER"); }
+    assert_eq!(result, "my_pager");
+}
+
+#[test]
+fn resolve_pager_falls_back_when_empty() {
+    use cpt::fs::open::resolve_pager;
+    let old = std::env::var("PAGER").ok();
+    unsafe { std::env::remove_var("PAGER"); }
+    let result = resolve_pager();
+    unsafe {
+        if let Some(p) = old { std::env::set_var("PAGER", p); }
+    }
+    #[cfg(windows)]
+    assert_eq!(result, "more");
+    #[cfg(not(windows))]
+    assert_eq!(result, "less");
+}
+
+// ── find_sevenzip ─────────────────────────────────────────────
+
+#[test]
+fn find_sevenzip_returns_option() {
+    // Just verify it doesn't panic and returns a valid-looking result.
+    let result = cpt::util::find_sevenzip();
+    if let Some(bin) = &result {
+        assert!(!bin.is_empty());
+        assert!(bin == "7z" || bin == "7za" || bin == "7zz");
+    }
+    // None is also acceptable if 7z isn't installed in the test env.
+    let _ = result;
+}
+
+// ── Explorer: archive extension variants ─────────────────────
+
+#[test]
+fn explorer_enter_on_various_archive_extensions() {
+    use cpt::action::Action;
+
+    let dir = tempdir("explorer_archive_variants");
+    let archives = ["a.zip", "b.7z", "c.tar.gz", "d.tgz", "e.rar"];
+    for name in &archives {
+        fs::write(dir.join(name), b"fake").unwrap();
+    }
+
+    for name in &archives {
+        let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+        // Navigate down until we find the target entry (skip ".." at cursor 0)
+        let mut found = false;
+        for _ in 0..50 {
+            explorer.handle_action(&Action::MoveDown);
+            if explorer.current_entry().map(|e| e.name == *name).unwrap_or(false) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "could not find {} in explorer", name);
+
+        let result = explorer.handle_action(&Action::EnterDir);
+        assert!(
+            matches!(result, Some(Action::UnpackArchive)),
+            "{} should trigger UnpackArchive, got {:?}",
+            name,
+            result
+        );
+    }
 
     fs::remove_dir_all(&dir).ok();
 }

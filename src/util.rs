@@ -35,3 +35,37 @@ pub fn format_size(bytes: u64) -> String {
 pub fn format_date(dt: &DateTime<Local>) -> String {
     dt.format("%m-%d %H:%M").to_string()
 }
+
+/// Return true if the filename looks like a supported archive.
+pub fn is_archive(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with(".zip")
+        || lower.ends_with(".7z")
+        || lower.ends_with(".rar")
+        || lower.ends_with(".tar")
+        || lower.ends_with(".gz")
+        || lower.ends_with(".bz2")
+        || lower.ends_with(".xz")
+        || lower.ends_with(".tgz")
+        || lower.ends_with(".tbz2")
+        || lower.ends_with(".tar.gz")
+        || lower.ends_with(".tar.bz2")
+        || lower.ends_with(".tar.xz")
+}
+
+/// Find the 7-Zip binary on PATH.
+/// Tries `7z`, `7za`, and `7zz` in order - returns the first that is found.
+pub fn find_sevenzip() -> Option<String> {
+    for candidate in &["7z", "7za", "7zz"] {
+        if std::process::Command::new(candidate)
+            .arg("i")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return Some((*candidate).to_string());
+        }
+    }
+    None
+}
