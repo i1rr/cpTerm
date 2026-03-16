@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 /// All application actions (messages).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -27,7 +29,14 @@ pub enum Action {
     MoveSelected,
     DeleteSelected,
     OpenFile,
-    OpenEditor,
+    /// Open `path` in the embedded in-pane editor.
+    OpenEditor { path: PathBuf },
+    /// Close the active editor pane (restores the explorer).
+    CloseEditor,
+    /// Save the active editor pane's content to disk.
+    SaveEditor,
+    /// Forward a raw key event to the active editor pane.
+    EditorKeyInput(crossterm::event::KeyEvent),
     ViewFile,
     UnpackArchive,
     Rename,

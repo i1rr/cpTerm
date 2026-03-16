@@ -42,6 +42,7 @@ enum PendingOp {
         pairs: Vec<(PathBuf, PathBuf)>,
     },
     Delete(Vec<PathBuf>),
+    CloseEditor,
 }
 
 pub struct App {
@@ -58,10 +59,8 @@ pub struct App {
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
     pending_op: Option<PendingOp>,
-    /// Path to open in $EDITOR after the next render cycle (requires TUI suspend).
-    pub editor_request: Option<PathBuf>,
     /// Path to open in $PAGER after the next render cycle (requires TUI suspend).
-    pub viewer_request: Option<PathBuf>,
+    viewer_request: Option<PathBuf>,
 }
 
 impl App {
@@ -87,7 +86,6 @@ impl App {
             action_tx,
             action_rx,
             pending_op: None,
-            editor_request: None,
             viewer_request: None,
         }
     }
@@ -113,15 +111,7 @@ impl App {
                 }
             }
 
-            // Handle editor/viewer requests - requires temporarily releasing the terminal.
-            if let Some(path) = self.editor_request.take() {
-                tui::suspend()?;
-                if let Err(msg) = crate::fs::open::open_in_editor(&path) {
-                    self.dialog = Some(Dialog::error(msg));
-                }
-                tui::resume(&mut terminal)?;
-                self.dual_pane.active_explorer_mut().refresh();
-            }
+            // Handle viewer requests - requires temporarily releasing the terminal.
             if let Some(path) = self.viewer_request.take() {
                 tui::suspend()?;
                 if let Err(msg) = crate::fs::open::open_in_viewer(&path) {
@@ -254,6 +244,11 @@ impl App {
                 };
             }
             InputMode::Normal => {}
+        }
+
+        // If the active pane is an editor, route all remaining keys into it.
+        if self.dual_pane.active_editor().is_some() {
+            return Action::EditorKeyInput(key);
         }
 
         // Normal mode
@@ -424,7 +419,12 @@ impl App {
             }
             Action::ConfirmDialog => {
                 if let Some(op) = self.pending_op.take() {
-                    self.execute_op(op);
+                    match op {
+                        PendingOp::CloseEditor => {
+                            self.dual_pane.close_editor_in_active();
+                        }
+                        other => self.execute_op(other),
+                    }
                 }
                 self.dialog = None;
             }
@@ -520,7 +520,11 @@ impl App {
                 ));
             }
             Action::OpenFile => {
-                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                {
                     if !entry.is_dir {
                         if let Err(msg) = crate::fs::open::open_file(&entry.path) {
                             self.dialog = Some(Dialog::error(msg));
@@ -528,28 +532,64 @@ impl App {
                     }
                 }
             }
-            Action::OpenEditor => {
-                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
-                    if !entry.is_dir {
-                        self.editor_request = Some(entry.path.clone());
-                    }
+            Action::OpenEditor { path } => {
+                if let Err(msg) = self.dual_pane.open_editor_in_active(path) {
+                    self.dialog = Some(Dialog::error(msg));
+                }
+            }
+            Action::CloseEditor => {
+                let modified = self
+                    .dual_pane
+                    .active_editor()
+                    .map(|e| e.modified)
+                    .unwrap_or(false);
+                if modified {
+                    self.pending_op = Some(PendingOp::CloseEditor);
+                    self.dialog = Some(Dialog::confirm(
+                        "Close editor",
+                        "File has unsaved changes. Discard?",
+                    ));
+                } else {
+                    self.dual_pane.close_editor_in_active();
+                }
+            }
+            Action::SaveEditor => {
+                let result = self
+                    .dual_pane
+                    .active_editor_mut()
+                    .map(|e| e.save())
+                    .unwrap_or(Ok(()));
+                if let Err(msg) = result {
+                    self.dialog = Some(Dialog::error(msg));
+                }
+            }
+            Action::EditorKeyInput(key) => {
+                if let Some(inner_action) = self.dual_pane.handle_editor_key(key) {
+                    self.dispatch(inner_action);
                 }
             }
             Action::ViewFile => {
-                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                {
                     if !entry.is_dir {
                         self.viewer_request = Some(entry.path.clone());
                     }
                 }
             }
             Action::UnpackArchive => {
-                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                {
                     if !entry.is_dir {
                         let dest = self.dual_pane.inactive_dir();
+                        let cwd = self.dual_pane.active_dir();
                         match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
                             Ok(cmd) => {
-                                let cwd =
-                                    self.dual_pane.active_explorer().current_dir.clone();
                                 let tx = self.action_tx.clone();
                                 self.task = Some(TaskState::new(&cmd));
                                 self.input_mode = InputMode::TaskOutput;
@@ -563,7 +603,11 @@ impl App {
                 }
             }
             Action::Rename => {
-                if let Some(entry) = self.dual_pane.active_explorer().current_entry() {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                {
                     self.input_mode = InputMode::Rename(entry.name.clone());
                 }
             }
@@ -578,34 +622,34 @@ impl App {
             }
             Action::StartFilter => {
                 self.input_mode = InputMode::Filter(String::new());
-                self.dual_pane
-                    .active_explorer_mut()
-                    .handle_action(&Action::StartFilter);
+                if let Some(e) = self.dual_pane.active_explorer_mut() {
+                    e.handle_action(&Action::StartFilter);
+                }
             }
             Action::FilterInput(ch) => {
                 if let InputMode::Filter(ref mut text) = self.input_mode {
                     text.push(ch);
                 }
-                self.dual_pane
-                    .active_explorer_mut()
-                    .handle_action(&Action::FilterInput(ch));
+                if let Some(e) = self.dual_pane.active_explorer_mut() {
+                    e.handle_action(&Action::FilterInput(ch));
+                }
             }
             Action::FilterBackspace => {
                 if let InputMode::Filter(ref mut text) = self.input_mode {
                     text.pop();
                 }
-                self.dual_pane
-                    .active_explorer_mut()
-                    .handle_action(&Action::FilterBackspace);
+                if let Some(e) = self.dual_pane.active_explorer_mut() {
+                    e.handle_action(&Action::FilterBackspace);
+                }
             }
             Action::FilterConfirm => {
                 self.input_mode = InputMode::Normal;
             }
             Action::FilterCancel => {
                 self.input_mode = InputMode::Normal;
-                self.dual_pane
-                    .active_explorer_mut()
-                    .handle_action(&Action::FilterCancel);
+                if let Some(e) = self.dual_pane.active_explorer_mut() {
+                    e.handle_action(&Action::FilterCancel);
+                }
             }
             Action::InputChar(ch) => match self.input_mode {
                 InputMode::Rename(ref mut text)
@@ -658,13 +702,11 @@ impl App {
                 self.input_mode = InputMode::Normal;
             }
             Action::OperationComplete(msg) => {
-                self.dual_pane.left.refresh();
-                self.dual_pane.right.refresh();
+                self.dual_pane.refresh_both();
                 self.dialog = Some(Dialog::info(msg));
             }
             Action::OperationError(msg) => {
-                self.dual_pane.left.refresh();
-                self.dual_pane.right.refresh();
+                self.dual_pane.refresh_both();
                 self.dialog = Some(Dialog::error(msg));
             }
             Action::OperationProgress { .. } => {}
@@ -730,6 +772,12 @@ impl App {
                      Ctrl+T - theme editor\n\
                      Ctrl+R - refresh\n\
                      Ctrl+Q - quit\n\
+                     \n\
+                     In editor (Enter on file to open):\n\
+                     Ctrl+S - save\n\
+                     Ctrl+Q or Esc - close editor\n\
+                     Tab - switch to other pane\n\
+                     Ctrl+I - insert tab character\n\
                      \n\
                      Type any character for command line (cd, shell commands)",
                 ));
@@ -805,12 +853,13 @@ impl App {
                 if let Some(entry) = self.bookmarks.entries.get(cursor) {
                     let path = entry.path.clone();
                     if path.is_dir() {
-                        let explorer = self.dual_pane.active_explorer_mut();
-                        explorer.current_dir = path;
-                        explorer.filter_text = None;
-                        explorer.cursor = 0;
-                        explorer.refresh();
-                        self.bookmark_panel = None;
+                        if let Some(explorer) = self.dual_pane.active_explorer_mut() {
+                            explorer.current_dir = path;
+                            explorer.filter_text = None;
+                            explorer.cursor = 0;
+                            explorer.refresh();
+                            self.bookmark_panel = None;
+                        }
                     } else {
                         self.dialog = Some(Dialog::error(format!(
                             "Path not found: {}",
@@ -822,7 +871,7 @@ impl App {
             }
             Action::BookmarkAdd => {
                 // Default name = folder name of active pane.
-                let dir = self.dual_pane.active_explorer().current_dir.clone();
+                let dir = self.dual_pane.active_dir();
                 let default_name = dir
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -880,7 +929,7 @@ impl App {
                     .clone();
                 self.bookmark_panel.as_mut().unwrap().naming = None;
                 if !name.is_empty() {
-                    let path = self.dual_pane.active_explorer().current_dir.clone();
+                    let path = self.dual_pane.active_dir();
                     self.bookmarks.add(name, path);
                     // Move cursor to newly added entry.
                     let count = self.bookmarks.entries.len();
@@ -1165,11 +1214,15 @@ impl App {
             PendingOp::Delete(sources) => {
                 tokio::spawn(ops::delete_entries(sources, tx));
             }
+            // CloseEditor is handled in ConfirmDialog dispatch directly; not routed here.
+            PendingOp::CloseEditor => {}
         }
     }
 
     fn get_operation_sources(&self) -> Vec<PathBuf> {
-        let explorer = self.dual_pane.active_explorer();
+        let Some(explorer) = self.dual_pane.active_explorer() else {
+            return vec![];
+        };
         let mut sources = explorer.selected_paths();
         if sources.is_empty() {
             if let Some(entry) = explorer.current_entry() {
@@ -1183,9 +1236,12 @@ impl App {
         if new_name.is_empty() {
             return;
         }
-        let explorer = self.dual_pane.active_explorer();
-        if let Some(entry) = explorer.current_entry() {
-            let old_path = entry.path.clone();
+        let old_path = self
+            .dual_pane
+            .active_explorer()
+            .and_then(|e| e.current_entry())
+            .map(|entry| entry.path.clone());
+        if let Some(old_path) = old_path {
             let Some(parent) = old_path.parent() else {
                 return;
             };
@@ -1193,7 +1249,9 @@ impl App {
             if let Err(e) = std::fs::rename(&old_path, &new_path) {
                 self.dialog = Some(Dialog::error(format!("Rename failed: {}", e)));
             }
-            self.dual_pane.active_explorer_mut().refresh();
+            if let Some(e) = self.dual_pane.active_explorer_mut() {
+                e.refresh();
+            }
         }
     }
 
@@ -1201,26 +1259,30 @@ impl App {
         if name.is_empty() {
             return;
         }
-        let dir = self.dual_pane.active_explorer().current_dir.clone();
+        let dir = self.dual_pane.active_dir();
         let new_dir = dir.join(name);
         if let Err(e) = std::fs::create_dir(&new_dir) {
             self.dialog = Some(Dialog::error(format!("Mkdir failed: {}", e)));
         }
-        self.dual_pane.active_explorer_mut().refresh();
+        if let Some(e) = self.dual_pane.active_explorer_mut() {
+            e.refresh();
+        }
     }
 
     fn do_create_file(&mut self, name: &str) {
         if name.is_empty() {
             return;
         }
-        let dir = self.dual_pane.active_explorer().current_dir.clone();
+        let dir = self.dual_pane.active_dir();
         let new_file = dir.join(name);
         if new_file.exists() {
             self.dialog = Some(Dialog::error(format!("Already exists: {}", name)));
         } else if let Err(e) = std::fs::File::create(&new_file) {
             self.dialog = Some(Dialog::error(format!("Create file failed: {}", e)));
         }
-        self.dual_pane.active_explorer_mut().refresh();
+        if let Some(e) = self.dual_pane.active_explorer_mut() {
+            e.refresh();
+        }
     }
 
     fn do_command(&mut self, cmd: &str) {
@@ -1252,16 +1314,17 @@ impl App {
             let target = if PathBuf::from(&path_str).is_absolute() {
                 PathBuf::from(&path_str)
             } else {
-                self.dual_pane.active_explorer().current_dir.join(&path_str)
+                self.dual_pane.active_dir().join(&path_str)
             };
 
             match clean_canonicalize(&target) {
                 Ok(resolved) if resolved.is_dir() => {
-                    let explorer = self.dual_pane.active_explorer_mut();
-                    explorer.current_dir = resolved;
-                    explorer.filter_text = None;
-                    explorer.cursor = 0;
-                    explorer.refresh();
+                    if let Some(explorer) = self.dual_pane.active_explorer_mut() {
+                        explorer.current_dir = resolved;
+                        explorer.filter_text = None;
+                        explorer.cursor = 0;
+                        explorer.refresh();
+                    }
                 }
                 Ok(_) => {
                     self.dialog =
@@ -1282,7 +1345,7 @@ impl App {
             return;
         }
 
-        let cwd = self.dual_pane.active_explorer().current_dir.clone();
+        let cwd = self.dual_pane.active_dir();
         self.task = Some(TaskState::new(cmd));
         self.input_mode = InputMode::TaskOutput;
         let tx = self.action_tx.clone();
@@ -1291,8 +1354,8 @@ impl App {
 
     fn save_session(&self) {
         let config = SessionConfig {
-            left_dir: self.dual_pane.left.current_dir.clone(),
-            right_dir: self.dual_pane.right.current_dir.clone(),
+            left_dir: self.dual_pane.left_dir(),
+            right_dir: self.dual_pane.right_dir(),
             active_pane: self.dual_pane.active,
             theme_name: self.theme_name.clone(),
         };

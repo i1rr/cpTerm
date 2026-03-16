@@ -6,6 +6,7 @@ pub fn open_file(path: &Path) -> Result<(), String> {
 
 /// Resolve the editor binary to use, following the chain:
 /// $EDITOR -> $VISUAL -> nano -> vi (Unix) / notepad (Windows)
+#[allow(dead_code)]
 pub fn resolve_editor() -> String {
     if let Ok(e) = std::env::var("EDITOR") {
         if !e.trim().is_empty() {
@@ -48,6 +49,7 @@ pub fn resolve_pager() -> String {
 }
 
 /// Open `path` in the user's editor (blocking - caller must suspend TUI first).
+#[allow(dead_code)]
 pub fn open_in_editor(path: &Path) -> Result<(), String> {
     let editor = resolve_editor();
     std::process::Command::new(&editor)
