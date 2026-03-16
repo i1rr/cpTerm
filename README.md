@@ -48,6 +48,26 @@ Compiled to a single native binary with no runtime dependencies.
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
+### With embedded editor open (Enter on a file)
+
+```
+╔══[ /home/ivan/projects ]════════════╦══ README.md [+]  Ln 5, Col 1 ════════╗
+║ Name                  Size   Date   ║  1  # cpt                             ║
+║ ..                                  ║  2                                     ║
+║ .gitignore              42 B  03-08 ║  3  Dual-pane TUI file explorer        ║
+║ Cargo.toml            1.4 KB  03-10 ║  4  built in Rust + Ratatui.           ║
+║ Cargo.lock           42.1 KB  03-11 ║  5 |                                   ║
+║▶README.md              520 B  03-01 ║  6                                     ║
+║ PLAN.md               8.2 KB  03-11 ║  7  ## Features                        ║
+║ src\                  <DIR>  03-11  ║  8                                     ║
+║                                     ║                                        ║
+╠═════════════════════════════════════╩════════════════════════════════════════╣
+║ /home/ivan/projects/README.md  Ln 5, Col 1                                  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ F1Help  F2Ren  F4New  F5Copy  F6Move  F8Del  Ctrl+B:Marks  Ctrl+Q:Quit      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
+
 ### With bookmark panel open  (`Ctrl+B`)
 
 ```
@@ -151,11 +171,15 @@ Compiled to a single native binary with no runtime dependencies.
 - Anything else is passed to the system shell (`cmd /C` on Windows, `sh -c` on Unix)
 - Output shown live in the task output window
 
-### File viewer / editor
-- **Enter** on a file - suspends the TUI and opens `$EDITOR`
-- **F3** - opens in `$PAGER` (read-only)
+### Embedded text editor
+- **Enter** on a file - opens it in an embedded editor directly inside the active pane
+- The other pane stays live; **Tab** switches between them
+- **Ctrl+S** saves to disk; **Ctrl+Q** / **Esc** closes (with unsaved-changes confirmation)
+- Full editing features via ratatui-textarea: undo/redo, Ctrl+F search, emacs-style
+  movement (Ctrl+A/E/K/Y), copy/cut/paste, and more
+- Cursor position shown in the status bar as `Ln X, Col Y`
+- **F3** - suspends the TUI and opens in `$PAGER` / `less` (read-only)
 - **Shift+Enter** - opens with the OS default application (detached)
-- Editor fallback chain: `$EDITOR` -> `$VISUAL` -> `nano` / `vi` (Unix) or `notepad` (Windows)
 
 ---
 
@@ -168,7 +192,7 @@ Compiled to a single native binary with no runtime dependencies.
 | `Up` / `Down` | Move cursor |
 | `Home` / `End` | Top / bottom of list |
 | `PgUp` / `PgDn` | Page scroll |
-| `Enter` | Enter directory or open file in `$EDITOR` |
+| `Enter` | Enter directory or open file in embedded editor |
 | `Backspace` | Go to parent directory |
 | `Tab` | Switch active pane |
 | `Ctrl+R` | Refresh active pane |
@@ -190,12 +214,16 @@ Compiled to a single native binary with no runtime dependencies.
 | `F6` | Move to other pane |
 | `F8` / `Delete` | Delete (with confirmation) |
 
-### File viewing
+### Embedded editor
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Open in `$EDITOR` (TUI suspends until editor exits) |
-| `F3` | Open in `$PAGER` / `less` (read-only) |
+| `Enter` | Open file in embedded in-pane editor |
+| `Ctrl+S` | Save (inside editor) |
+| `Ctrl+Q` / `Esc` | Close editor (confirm if unsaved) |
+| `Tab` | Switch to other pane (editor stays open) |
+| `Ctrl+F` | Search inside editor |
+| `F3` | Open in `$PAGER` / `less` (read-only, TUI suspends) |
 | `Shift+Enter` | Open with OS default application |
 
 ### Overlays & panels
@@ -300,8 +328,9 @@ src/
   task.rs               TaskState, async shell runner, line streaming
   components/
     explorer.rs         single pane: listing, navigation, selection, filter
-    dual_pane.rs        two Explorer instances, focus, cross-pane operations
-    status_bar.rs       path prompt, selection info, filter indicator
+    dual_pane.rs        PaneContent enum (Explorer | EditorPane), focus, cross-pane ops
+    editor_pane.rs      embedded text editor (ratatui-textarea), save, key handling
+    status_bar.rs       path prompt, selection info, filter indicator, Ln/Col for editor
     command_bar.rs      F-key hints, text input for filter/rename/mkdir
     dialog.rs           modal dialogs: confirm, conflict, error, info
     theme_editor.rs     theme editor overlay + 256-color picker
@@ -310,7 +339,7 @@ src/
   fs/
     entry.rs            FileEntry struct, directory reading, sorting
     ops.rs              async copy/move/delete, conflict detection
-    open.rs             OS-default file opener wrapper
+    open.rs             OS-default opener, pager launcher
 tests/
   unit_tests.rs         unit and integration tests
 ```
@@ -322,6 +351,7 @@ tests/
 | Crate | Role |
 |-------|------|
 | [ratatui](https://ratatui.rs) 0.30 | TUI rendering |
+| [ratatui-textarea](https://github.com/rhysd/tui-textarea) 0.8 | Embedded text editor widget |
 | [crossterm](https://github.com/crossterm-rs/crossterm) 0.29 | Terminal I/O, key events |
 | [tokio](https://tokio.rs) 1 | Async runtime, background tasks |
 | [tokio-util](https://docs.rs/tokio-util) 0.7 | Async line reader |

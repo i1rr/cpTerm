@@ -35,8 +35,12 @@ src/
   components/
     mod.rs             - Component trait
     explorer.rs        - single pane: file listing, navigation, selection, filter
-    dual_pane.rs       - two Explorer instances, focus switching, cross-pane ops
-    status_bar.rs      - command prompt (path> cmd), selection info, filter status
+    dual_pane.rs       - PaneContent enum (Explorer | Box<EditorPane>), focus switching,
+                         cross-pane ops; open_editor_in_active / close_editor_in_active
+    editor_pane.rs     - EditorPane: embedded text editor using ratatui-textarea; load,
+                         save, key handling; TextArea<'static> with line numbers
+    status_bar.rs      - command prompt (path> cmd), selection info, filter status,
+                         Ln/Col display when editor is active
     command_bar.rs     - F-key hints / text input for filter, mkdir, rename, create file
     dialog.rs          - modal dialogs: confirm, conflict, error, info (scrollable)
     theme_editor.rs    - interactive theme editor overlay with live preview
@@ -48,9 +52,10 @@ src/
     ops.rs             - async copy/move/delete with conflict detection and auto-rename
     open.rs            - open_file(), open_in_editor(), open_in_viewer(), editor/pager
                          resolution ($EDITOR/$VISUAL/nano/vi on Unix, notepad on Windows)
+                         open_in_editor kept for tests; embedded editor is now primary
     archive.rs         - shell_quote(), resolve_unpack_command() per format/OS tool dispatch
 tests/
-  unit_tests.rs        - 170+ unit/integration tests
+  unit_tests.rs        - 149+ unit/integration tests
 ```
 
 ## UI Layout
@@ -75,9 +80,9 @@ tests/
 | Up/Down | Move cursor |
 | Home/End | Top/bottom of list |
 | PageUp/PageDown | Page scroll |
-| Enter | Enter directory / open file in internal editor |
-| F3 | View file (internal, read-only) |
-| Shift+Enter | Open file with external editor ($EDITOR / system default) |
+| Enter | Enter directory / open file in embedded in-pane editor |
+| F3 | View file in pager ($PAGER / less, read-only, TUI suspends) |
+| Shift+Enter | Open file with OS default application (detached) |
 | Backspace | Parent directory |
 | Tab | Switch pane |
 | Space / Insert | Toggle select + move down |
@@ -117,14 +122,16 @@ is available, suggesting the package manager install command.
 
 ### Editor / Pager Defaults
 
-| Platform | Editor chain | Pager chain |
-|----------|-------------|-------------|
-| Linux / macOS | $EDITOR -> $VISUAL -> nano -> vi | $PAGER -> less |
-| Windows | $EDITOR -> $VISUAL -> notepad | $PAGER -> more |
+The embedded editor (Enter on a text file) runs directly inside the active pane - no
+TUI suspend needed. The external pager (F3) still suspends the TUI:
 
-The editor and pager are launched via TUI suspend/resume: the alternate screen is exited,
-the process takes over the terminal, and the TUI is restored after the process exits.
-This matches the approach used by Midnight Commander and ranger.
+| Platform | Pager chain |
+|----------|-------------|
+| Linux / macOS | $PAGER -> less |
+| Windows | $PAGER -> more |
+
+`resolve_editor()` and `open_in_editor()` are retained in `src/fs/open.rs` for test
+coverage but are not used by the main binary at runtime.
 
 ### Path Handling
 
@@ -148,12 +155,19 @@ This matches the approach used by Midnight Commander and ranger.
 - `src/components/task_window.rs`: floating overlay with live output, minimize, scroll
 - `InputMode::TaskOutput` variant, indicator in command bar when minimized
 
-### Internal Text Editor / File Viewer (done)
-- Enter on a file: suspend TUI, launch `$EDITOR` (fallback: nano -> vi / notepad), resume
+### Embedded In-Pane Editor (done)
+- Enter on a text file replaces the active pane with `EditorPane` (other pane stays live)
+- `EditorPane` wraps `ratatui-textarea::TextArea<'static>` - line numbers, undo/redo, search
+- Ctrl+S saves; Ctrl+Q / Esc closes (confirm dialog if unsaved changes)
+- Tab switches to the other pane without closing the editor
+- `Action::OpenEditor { path }` carries the path; `CloseEditor`, `SaveEditor`,
+  `EditorKeyInput(KeyEvent)` round out the new action variants
+- `PaneContent` enum in `dual_pane.rs` lets each slot hold Explorer or Box<EditorPane>
+- Status bar shows `Ln X, Col Y` when editor is active
 - F3: suspend TUI, launch `$PAGER` (fallback: less / more), resume
 - Shift+Enter: `open::that()` (OS-default, detached, no terminal takeover)
-- `tui::suspend()` / `tui::resume()` helpers in `src/tui.rs`
-- `resolve_editor()`, `resolve_pager()`, `open_in_editor()`, `open_in_viewer()` in `src/fs/open.rs`
+- `tui::suspend()` / `tui::resume()` helpers in `src/tui.rs` still used for F3
+- `resolve_pager()`, `open_in_viewer()` in `src/fs/open.rs`
 
 ### Archive Unpack (done)
 - Enter on an archive triggers `Action::UnpackArchive`
