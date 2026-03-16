@@ -1,7 +1,7 @@
 # cpt - dual-pane TUI file explorer
 
 ## Stack
-Rust, Ratatui 0.30, Crossterm 0.29, Tokio 1, tokio-util 0.7
+Rust, Ratatui 0.30, ratatui-textarea 0.8, Crossterm 0.29, Tokio 1, tokio-util 0.7
 
 ## Commands
 - Build: `cargo build`
