@@ -17,7 +17,24 @@ pub fn draw_status_bar(
     input_mode: &InputMode,
     theme: &Theme,
 ) {
-    let explorer = dual_pane.active_explorer();
+    // When the active pane is an editor, show the file path and cursor position.
+    if let Some(editor) = dual_pane.active_editor() {
+        let path = editor.path.to_string_lossy().to_string();
+        let (row, col) = editor.cursor();
+        let info = format!("{}  Ln {}, Col {}", path, row + 1, col + 1);
+        let paragraph = Paragraph::new(Line::from(vec![
+            Span::styled(info, Style::default().fg(theme.path_fg)),
+        ]))
+        .style(Style::default().bg(theme.status_bg).fg(theme.status_fg));
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // Explorer mode
+    let explorer = match dual_pane.active_explorer() {
+        Some(e) => e,
+        None => return,
+    };
     let path = explorer.current_dir.to_string_lossy().to_string();
 
     let mut spans = vec![

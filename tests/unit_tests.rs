@@ -805,7 +805,7 @@ fn explorer_enter_on_file_returns_open_editor() {
     explorer.handle_action(&cpt::action::Action::MoveDown); // onto the file
 
     let result = explorer.handle_action(&cpt::action::Action::EnterDir);
-    assert!(matches!(result, Some(cpt::action::Action::OpenEditor)));
+    assert!(matches!(result, Some(cpt::action::Action::OpenEditor { .. })));
 
     fs::remove_dir_all(&dir).ok();
 }
@@ -1008,12 +1008,12 @@ fn dual_pane_refresh_both() {
         right.clone(),
         cpt::config::PaneSide::Left,
     );
-    assert_eq!(dual.left.filtered.len(), 1);
+    assert_eq!(dual.left.as_explorer().unwrap().filtered.len(), 1);
 
     // Add a file, then refresh
     fs::write(left.join("b.txt"), "").unwrap();
     dual.handle_action(&cpt::action::Action::Refresh);
-    assert_eq!(dual.left.filtered.len(), 2);
+    assert_eq!(dual.left.as_explorer().unwrap().filtered.len(), 2);
 
     fs::remove_dir_all(&left).ok();
     fs::remove_dir_all(&right).ok();
@@ -1036,14 +1036,14 @@ fn dual_pane_forwards_to_active() {
 
     // MoveDown on left pane
     dual.handle_action(&cpt::action::Action::MoveDown);
-    assert_eq!(dual.left.cursor, 1);
-    assert_eq!(dual.right.cursor, 0); // Unchanged
+    assert_eq!(dual.left.as_explorer().unwrap().cursor, 1);
+    assert_eq!(dual.right.as_explorer().unwrap().cursor, 0); // Unchanged
 
     // Switch and move on right pane
     dual.handle_action(&cpt::action::Action::SwitchPane);
     dual.handle_action(&cpt::action::Action::MoveDown);
-    assert_eq!(dual.right.cursor, 1);
-    assert_eq!(dual.left.cursor, 1); // Still unchanged
+    assert_eq!(dual.right.as_explorer().unwrap().cursor, 1);
+    assert_eq!(dual.left.as_explorer().unwrap().cursor, 1); // Still unchanged
 
     fs::remove_dir_all(&left).ok();
     fs::remove_dir_all(&right).ok();
@@ -1377,14 +1377,14 @@ fn dual_pane_actions_only_affect_active() {
 
     // Select all on left
     dual.handle_action(&cpt::action::Action::SelectAll);
-    assert_eq!(dual.left.selected.len(), 1);
-    assert_eq!(dual.right.selected.len(), 0);
+    assert_eq!(dual.left.as_explorer().unwrap().selected.len(), 1);
+    assert_eq!(dual.right.as_explorer().unwrap().selected.len(), 0);
 
     // Switch and select all on right
     dual.handle_action(&cpt::action::Action::SwitchPane);
     dual.handle_action(&cpt::action::Action::SelectAll);
-    assert_eq!(dual.left.selected.len(), 1); // unchanged
-    assert_eq!(dual.right.selected.len(), 1);
+    assert_eq!(dual.left.as_explorer().unwrap().selected.len(), 1); // unchanged
+    assert_eq!(dual.right.as_explorer().unwrap().selected.len(), 1);
 
     fs::remove_dir_all(&left).ok();
     fs::remove_dir_all(&right).ok();

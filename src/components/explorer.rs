@@ -161,7 +161,7 @@ impl Explorer {
                     } else if crate::util::is_archive(&entry.name) {
                         return Some(Action::UnpackArchive);
                     } else {
-                        return Some(Action::OpenEditor);
+                        return Some(Action::OpenEditor { path: entry.path.clone() });
                     }
                 }
                 None
