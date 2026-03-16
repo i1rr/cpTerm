@@ -12,6 +12,10 @@ pub enum DialogKind {
         title: String,
         message: String,
     },
+    CloseEditorConfirm {
+        title: String,
+        message: String,
+    },
     Conflict {
         title: String,
         message: String,
@@ -30,6 +34,16 @@ impl Dialog {
     pub fn confirm(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             kind: DialogKind::Confirm {
+                title: title.into(),
+                message: message.into(),
+            },
+            scroll: 0,
+        }
+    }
+
+    pub fn close_editor_confirm(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind: DialogKind::CloseEditorConfirm {
                 title: title.into(),
                 message: message.into(),
             },
@@ -79,6 +93,14 @@ impl Dialog {
                 let text = format!("{}\n\nEnter: Confirm  Esc: Cancel", message);
                 (text, block)
             }
+            DialogKind::CloseEditorConfirm { title, message } => {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.confirm_border))
+                    .title(Line::from(format!(" {} ", title)));
+                let text = format!("{}\n\nEnter: Save and close  D: Discard  Esc: Cancel", message);
+                (text, block)
+            }
             DialogKind::Conflict { title, message } => {
                 let block = Block::default()
                     .borders(Borders::ALL)
@@ -118,7 +140,9 @@ impl Dialog {
         frame.render_widget(Clear, popup_area);
 
         let style = match &self.kind {
-            DialogKind::Confirm { .. } => Style::default().fg(theme.confirm_fg),
+            DialogKind::Confirm { .. } | DialogKind::CloseEditorConfirm { .. } => {
+                Style::default().fg(theme.confirm_fg)
+            }
             DialogKind::Conflict { .. } => Style::default().fg(theme.conflict_fg),
             DialogKind::Error(_) => Style::default()
                 .fg(theme.error_fg)
