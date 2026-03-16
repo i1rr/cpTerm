@@ -89,6 +89,8 @@ pub enum Action {
     ThemeEditorOpenPicker,
     ThemeEditorPickerLeft,
     ThemeEditorPickerRight,
+    /// Toggle the active editor pane to fill the entire dual-pane area.
+    ToggleEditorFullscreen,
     // Task runner
     TaskLine(String),
     TaskComplete(i32),

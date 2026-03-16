@@ -13,6 +13,7 @@ pub fn draw_command_bar(
     area: Rect,
     input_mode: &InputMode,
     active_editor: bool,
+    editor_fullscreen: bool,
     task: Option<&TaskState>,
     theme: &Theme,
 ) {
@@ -24,16 +25,33 @@ pub fn draw_command_bar(
     let line = match input_mode {
         InputMode::Normal => {
             if active_editor {
-                Line::from(vec![
-                    Span::styled("Ctrl+S", hint_style),
-                    Span::raw(":Save  "),
-                    Span::styled("Ctrl+Q", hint_style),
-                    Span::raw("/"),
-                    Span::styled("Esc", hint_style),
-                    Span::raw(":Close  "),
-                    Span::styled("Tab", hint_style),
-                    Span::raw(":Switch pane"),
-                ])
+                if editor_fullscreen {
+                    Line::from(vec![
+                        Span::styled("Ctrl+S", hint_style),
+                        Span::raw(":Save  "),
+                        Span::styled("Ctrl+Q", hint_style),
+                        Span::raw("/"),
+                        Span::styled("Esc", hint_style),
+                        Span::raw(":Close  "),
+                        Span::styled("Tab", hint_style),
+                        Span::raw(":Switch pane  "),
+                        Span::styled("Ctrl+E", hint_style),
+                        Span::raw(":Exit fullscreen"),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled("Ctrl+S", hint_style),
+                        Span::raw(":Save  "),
+                        Span::styled("Ctrl+Q", hint_style),
+                        Span::raw("/"),
+                        Span::styled("Esc", hint_style),
+                        Span::raw(":Close  "),
+                        Span::styled("Tab", hint_style),
+                        Span::raw(":Switch pane  "),
+                        Span::styled("Ctrl+E", hint_style),
+                        Span::raw(":Fullscreen"),
+                    ])
+                }
             } else {
                 let mut spans = vec![
                     Span::styled("F1", fkey_style),
