@@ -12,6 +12,7 @@ pub fn draw_command_bar(
     frame: &mut Frame,
     area: Rect,
     input_mode: &InputMode,
+    active_editor: bool,
     task: Option<&TaskState>,
     theme: &Theme,
 ) {
@@ -22,39 +23,52 @@ pub fn draw_command_bar(
 
     let line = match input_mode {
         InputMode::Normal => {
-            let mut spans = vec![
-                Span::styled("F1", fkey_style),
-                Span::raw("Help "),
-                Span::styled("F2", fkey_style),
-                Span::raw("Ren "),
-                Span::styled("F4", fkey_style),
-                Span::raw("New "),
-                Span::styled("F5", fkey_style),
-                Span::raw("Copy "),
-                Span::styled("F6", fkey_style),
-                Span::raw("Move "),
-                Span::styled("F8", fkey_style),
-                Span::raw("Del  "),
-                Span::styled("Ctrl+F", hint_style),
-                Span::raw(":Filter  "),
-                Span::styled("Tab", hint_style),
-                Span::raw(":Switch  "),
-                Span::styled("Ctrl+T", hint_style),
-                Span::raw(":Theme  "),
-                Span::styled("Ctrl+Q", hint_style),
-                Span::raw(":Quit"),
-            ];
-            if let Some(t) = task {
-                let (label, color) = if t.running {
-                    ("  [task running - Ctrl+Z to view]", theme.filter_fg)
-                } else if t.exit_code.unwrap_or(0) != 0 {
-                    ("  [task failed - Ctrl+Z to view]", theme.error_border)
-                } else {
-                    ("  [task done - Ctrl+Z to view]", theme.confirm_border)
-                };
-                spans.push(Span::styled(label, Style::default().fg(color)));
+            if active_editor {
+                Line::from(vec![
+                    Span::styled("Ctrl+S", hint_style),
+                    Span::raw(":Save  "),
+                    Span::styled("Ctrl+Q", hint_style),
+                    Span::raw("/"),
+                    Span::styled("Esc", hint_style),
+                    Span::raw(":Close  "),
+                    Span::styled("Tab", hint_style),
+                    Span::raw(":Switch pane"),
+                ])
+            } else {
+                let mut spans = vec![
+                    Span::styled("F1", fkey_style),
+                    Span::raw("Help "),
+                    Span::styled("F2", fkey_style),
+                    Span::raw("Ren "),
+                    Span::styled("F4", fkey_style),
+                    Span::raw("New "),
+                    Span::styled("F5", fkey_style),
+                    Span::raw("Copy "),
+                    Span::styled("F6", fkey_style),
+                    Span::raw("Move "),
+                    Span::styled("F8", fkey_style),
+                    Span::raw("Del  "),
+                    Span::styled("Ctrl+F", hint_style),
+                    Span::raw(":Filter  "),
+                    Span::styled("Tab", hint_style),
+                    Span::raw(":Switch  "),
+                    Span::styled("Ctrl+T", hint_style),
+                    Span::raw(":Theme  "),
+                    Span::styled("Ctrl+Q", hint_style),
+                    Span::raw(":Quit"),
+                ];
+                if let Some(t) = task {
+                    let (label, color) = if t.running {
+                        ("  [task running - Ctrl+Z to view]", theme.filter_fg)
+                    } else if t.exit_code.unwrap_or(0) != 0 {
+                        ("  [task failed - Ctrl+Z to view]", theme.error_border)
+                    } else {
+                        ("  [task done - Ctrl+Z to view]", theme.confirm_border)
+                    };
+                    spans.push(Span::styled(label, Style::default().fg(color)));
+                }
+                Line::from(spans)
             }
-            Line::from(spans)
         }
         InputMode::TaskOutput => Line::from(vec![
             Span::styled("Up/Down", hint_style),

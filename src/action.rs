@@ -33,6 +33,10 @@ pub enum Action {
     OpenEditor { path: PathBuf },
     /// Close the active editor pane (restores the explorer).
     CloseEditor,
+    /// Save the active editor pane's content to disk, then close it.
+    SaveAndCloseEditor,
+    /// Close the active editor pane without saving.
+    DiscardAndCloseEditor,
     /// Save the active editor pane's content to disk.
     SaveEditor,
     /// Forward a raw key event to the active editor pane.

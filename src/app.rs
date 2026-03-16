@@ -142,7 +142,15 @@ impl App {
 
         self.dual_pane.draw(frame, chunks[0], &self.theme);
         draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
-        draw_command_bar(frame, chunks[2], &self.input_mode, self.task.as_ref(), &self.theme);
+        let active_editor = self.dual_pane.active_editor().is_some();
+        draw_command_bar(
+            frame,
+            chunks[2],
+            &self.input_mode,
+            active_editor,
+            self.task.as_ref(),
+            &self.theme,
+        );
 
         if let Some(ref mut panel) = self.bookmark_panel {
             panel.draw(frame, frame.area(), &self.bookmarks, &self.theme);
@@ -181,6 +189,7 @@ impl App {
                 KeyCode::Down => Action::DialogScrollDown,
                 KeyCode::Char('o') | KeyCode::Char('O') => Action::ConflictOverwrite,
                 KeyCode::Char('r') | KeyCode::Char('R') => Action::ConflictRename,
+                KeyCode::Char('d') | KeyCode::Char('D') => Action::DiscardAndCloseEditor,
                 _ => Action::Noop,
             };
         }
@@ -421,6 +430,16 @@ impl App {
                 if let Some(op) = self.pending_op.take() {
                     match op {
                         PendingOp::CloseEditor => {
+                            // Save then close
+                            let result = self
+                                .dual_pane
+                                .active_editor_mut()
+                                .map(|e| e.save())
+                                .unwrap_or(Ok(()));
+                            if let Err(msg) = result {
+                                self.dialog = Some(Dialog::error(msg));
+                                return;
+                            }
                             self.dual_pane.close_editor_in_active();
                         }
                         other => self.execute_op(other),
@@ -545,9 +564,9 @@ impl App {
                     .unwrap_or(false);
                 if modified {
                     self.pending_op = Some(PendingOp::CloseEditor);
-                    self.dialog = Some(Dialog::confirm(
+                    self.dialog = Some(Dialog::close_editor_confirm(
                         "Close editor",
-                        "File has unsaved changes. Discard?",
+                        "File has unsaved changes.",
                     ));
                 } else {
                     self.dual_pane.close_editor_in_active();
@@ -561,6 +580,24 @@ impl App {
                     .unwrap_or(Ok(()));
                 if let Err(msg) = result {
                     self.dialog = Some(Dialog::error(msg));
+                }
+            }
+            Action::SaveAndCloseEditor => {
+                let result = self
+                    .dual_pane
+                    .active_editor_mut()
+                    .map(|e| e.save())
+                    .unwrap_or(Ok(()));
+                match result {
+                    Ok(()) => self.dual_pane.close_editor_in_active(),
+                    Err(msg) => self.dialog = Some(Dialog::error(msg)),
+                }
+            }
+            Action::DiscardAndCloseEditor => {
+                if matches!(self.pending_op, Some(PendingOp::CloseEditor)) {
+                    self.pending_op = None;
+                    self.dialog = None;
+                    self.dual_pane.close_editor_in_active();
                 }
             }
             Action::EditorKeyInput(key) => {
