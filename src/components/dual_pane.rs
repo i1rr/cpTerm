@@ -37,6 +37,8 @@ pub struct DualPane {
     pub left: PaneContent,
     pub right: PaneContent,
     pub active: PaneSide,
+    /// When true, the active editor fills the whole dual-pane area.
+    pub editor_fullscreen: bool,
 }
 
 impl DualPane {
@@ -45,6 +47,7 @@ impl DualPane {
             left: PaneContent::Explorer(Explorer::new(left_dir)),
             right: PaneContent::Explorer(Explorer::new(right_dir)),
             active,
+            editor_fullscreen: false,
         }
     }
 
@@ -133,6 +136,7 @@ impl DualPane {
             PaneContent::Editor(e) => e.origin_dir.clone(),
             PaneContent::Explorer(_) => return,
         };
+        self.editor_fullscreen = false;
         match self.active {
             PaneSide::Left => self.left = PaneContent::Explorer(Explorer::new(origin_dir)),
             PaneSide::Right => self.right = PaneContent::Explorer(Explorer::new(origin_dir)),
@@ -150,6 +154,7 @@ impl DualPane {
     pub fn handle_action(&mut self, action: &Action) -> Option<Action> {
         match action {
             Action::SwitchPane => {
+                self.editor_fullscreen = false;
                 self.active = match self.active {
                     PaneSide::Left => PaneSide::Right,
                     PaneSide::Right => PaneSide::Left,
@@ -179,6 +184,21 @@ impl DualPane {
     }
 
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        if self.editor_fullscreen {
+            // Give the entire area to the active pane (must be an editor).
+            match self.active {
+                PaneSide::Left => match &mut self.left {
+                    PaneContent::Editor(e) => e.draw(frame, area, true, theme),
+                    PaneContent::Explorer(e) => e.draw(frame, area, true, theme),
+                },
+                PaneSide::Right => match &mut self.right {
+                    PaneContent::Editor(e) => e.draw(frame, area, true, theme),
+                    PaneContent::Explorer(e) => e.draw(frame, area, true, theme),
+                },
+            }
+            return;
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])

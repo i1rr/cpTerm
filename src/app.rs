@@ -143,11 +143,13 @@ impl App {
         self.dual_pane.draw(frame, chunks[0], &self.theme);
         draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
         let active_editor = self.dual_pane.active_editor().is_some();
+        let editor_fullscreen = self.dual_pane.editor_fullscreen;
         draw_command_bar(
             frame,
             chunks[2],
             &self.input_mode,
             active_editor,
+            editor_fullscreen,
             self.task.as_ref(),
             &self.theme,
         );
@@ -255,8 +257,12 @@ impl App {
             InputMode::Normal => {}
         }
 
-        // If the active pane is an editor, route all remaining keys into it.
+        // If the active pane is an editor, intercept the fullscreen toggle before
+        // routing everything else into the editor.
         if self.dual_pane.active_editor().is_some() {
+            if let (KeyModifiers::CONTROL, KeyCode::Char('e')) = (key.modifiers, key.code) {
+                return Action::ToggleEditorFullscreen;
+            }
             return Action::EditorKeyInput(key);
         }
 
@@ -598,6 +604,11 @@ impl App {
                     self.pending_op = None;
                     self.dialog = None;
                     self.dual_pane.close_editor_in_active();
+                }
+            }
+            Action::ToggleEditorFullscreen => {
+                if self.dual_pane.active_editor().is_some() {
+                    self.dual_pane.editor_fullscreen = !self.dual_pane.editor_fullscreen;
                 }
             }
             Action::EditorKeyInput(key) => {
