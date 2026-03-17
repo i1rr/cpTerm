@@ -1571,7 +1571,7 @@ fn theme_field_get_set() {
 }
 
 #[test]
-fn theme_field_get_set_all_25() {
+fn theme_field_get_set_all() {
     let mut t = cpt::theme::Theme::default();
     for i in 0..cpt::theme::FIELD_COUNT {
         let original = t.get_field(i);
@@ -2708,6 +2708,145 @@ fn open_in_editor_missing_binary_returns_err() {
         result.is_err(),
         "open_in_editor with nonexistent binary should return Err"
     );
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── Explorer: new file highlighting ──────────────────────────
+
+#[test]
+fn explorer_new_files_highlighted_then_cleared_on_focus() {
+    let dir = tempdir("explorer_new_highlight");
+    fs::write(dir.join("existing.txt"), "old").unwrap();
+    fs::write(dir.join("new_file.txt"), "new").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    // Mark new_file.txt as new
+    explorer.new_files.insert(dir.join("new_file.txt"));
+
+    assert!(explorer.new_files.contains(&dir.join("new_file.txt")));
+
+    // Navigate to the new file (entries sorted alphabetically: existing.txt, new_file.txt)
+    explorer.handle_action(&cpt::action::Action::MoveDown); // existing.txt
+    explorer.handle_action(&cpt::action::Action::MoveDown); // new_file.txt
+
+    // After focusing on the new file, it should be cleared from new_files
+    assert!(
+        !explorer.new_files.contains(&dir.join("new_file.txt")),
+        "new file highlight should be cleared after cursor lands on it"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_new_files_empty_by_default() {
+    let dir = tempdir("explorer_new_empty");
+    fs::write(dir.join("a.txt"), "").unwrap();
+
+    let explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    assert!(explorer.new_files.is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explorer_new_files_not_cleared_for_other_entries() {
+    let dir = tempdir("explorer_new_other");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let mut explorer = cpt::components::explorer::Explorer::new(dir.clone());
+    explorer.new_files.insert(dir.join("b.txt"));
+
+    // Move down to a.txt (first entry after "..")
+    explorer.handle_action(&cpt::action::Action::MoveDown);
+
+    // b.txt should still be highlighted since cursor is on a.txt
+    assert!(
+        explorer.new_files.contains(&dir.join("b.txt")),
+        "b.txt highlight should remain while cursor is on a.txt"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ── Theme: new_file_fg field ─────────────────────────────────
+
+#[test]
+fn theme_new_file_fg_exists_in_default() {
+    let theme = cpt::theme::Theme::default();
+    assert_eq!(
+        format!("{:?}", theme.new_file_fg),
+        format!("{:?}", ratatui::style::Color::LightGreen)
+    );
+}
+
+#[test]
+fn theme_new_file_fg_get_set_field() {
+    let mut theme = cpt::theme::Theme::default();
+    // new_file_fg is at index 5
+    theme.set_field(5, ratatui::style::Color::Red);
+    assert_eq!(
+        format!("{:?}", theme.get_field(5)),
+        format!("{:?}", ratatui::style::Color::Red)
+    );
+    assert_eq!(
+        format!("{:?}", theme.new_file_fg),
+        format!("{:?}", ratatui::style::Color::Red)
+    );
+}
+
+#[test]
+fn theme_field_count_is_26() {
+    assert_eq!(cpt::theme::FIELD_COUNT, 26);
+    assert_eq!(cpt::theme::FIELD_INFO.len(), 26);
+}
+
+// ── DualPane: mark_new_files ─────────────────────────────────
+
+#[test]
+fn dual_pane_mark_new_files_applies_to_matching_pane() {
+    let dir = tempdir("dual_pane_new_files");
+    fs::write(dir.join("file.txt"), "content").unwrap();
+
+    let mut dual = cpt::components::dual_pane::DualPane::new(
+        dir.clone(),
+        std::env::temp_dir(),
+        cpt::config::PaneSide::Left,
+    );
+
+    let new_path = dir.join("file.txt");
+    dual.mark_new_files(&[new_path.clone()]);
+
+    // Left pane should have the new file marked
+    if let cpt::components::dual_pane::PaneContent::Explorer(e) = &dual.left {
+        assert!(
+            e.new_files.contains(&new_path),
+            "left pane should mark file.txt as new"
+        );
+    } else {
+        panic!("expected Explorer in left pane");
+    }
+
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn dual_pane_snapshot_dir_captures_entries() {
+    let dir = tempdir("dual_pane_snapshot");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let dual = cpt::components::dual_pane::DualPane::new(
+        dir.clone(),
+        std::env::temp_dir(),
+        cpt::config::PaneSide::Left,
+    );
+
+    let snapshot = dual.snapshot_dir(&dir);
+    assert!(snapshot.contains(&dir.join("a.txt")));
+    assert!(snapshot.contains(&dir.join("b.txt")));
+
     fs::remove_dir_all(&dir).ok();
 }
 

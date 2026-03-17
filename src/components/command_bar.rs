@@ -129,6 +129,23 @@ pub fn draw_command_bar(
             Span::styled("_", input_style),
             Span::raw("  (Enter to confirm, Esc to cancel)"),
         ]),
+        InputMode::UnpackChoice { .. } => Line::from(vec![
+            Span::styled("Unpack: ", input_style),
+            Span::styled("[e]", fkey_style),
+            Span::raw("xtract here  "),
+            Span::styled("[f]", fkey_style),
+            Span::raw("older  "),
+            Span::styled("[c]", fkey_style),
+            Span::raw("ustom path  "),
+            Span::styled("Esc", hint_style),
+            Span::raw(":cancel"),
+        ]),
+        InputMode::UnpackCustomPath { text, .. } => Line::from(vec![
+            Span::styled("Extract to: ", input_style),
+            Span::raw(text.as_str()),
+            Span::styled("_", input_style),
+            Span::raw("  (Enter to confirm, Esc to cancel)"),
+        ]),
         InputMode::ContextMenu(_) => Line::from(vec![
             Span::styled("Up/Down", hint_style),
             Span::raw(":navigate  "),

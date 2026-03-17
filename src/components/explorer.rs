@@ -20,6 +20,8 @@ pub struct Explorer {
     pub scroll_offset: usize,
     pub selected: HashSet<usize>,
     pub filter_text: Option<String>,
+    /// Paths of newly created/copied/extracted files, highlighted until focused.
+    pub new_files: HashSet<PathBuf>,
 }
 
 impl Explorer {
@@ -32,6 +34,7 @@ impl Explorer {
             scroll_offset: 0,
             selected: HashSet::new(),
             filter_text: None,
+            new_files: HashSet::new(),
         };
         explorer.refresh();
         explorer
@@ -106,22 +109,36 @@ impl Explorer {
         self.selected.iter().map(|&i| self.entries[i].size).sum()
     }
 
+    /// Remove the file at the current cursor position from the new_files set.
+    fn clear_new_highlight_at_cursor(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        if let Some(&idx) = self.filtered.get(self.cursor - 1) {
+            let path = self.entries[idx].path.clone();
+            self.new_files.remove(&path);
+        }
+    }
+
     pub fn handle_action(&mut self, action: &Action) -> Option<Action> {
         match action {
             Action::MoveUp => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::MoveDown => {
                 if self.cursor + 1 < self.display_len() {
                     self.cursor += 1;
                 }
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::MoveToTop => {
                 self.cursor = 0;
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::MoveToBottom => {
@@ -129,15 +146,18 @@ impl Explorer {
                 if len > 0 {
                     self.cursor = len - 1;
                 }
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::PageUp => {
                 self.cursor = self.cursor.saturating_sub(20);
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::PageDown => {
                 let len = self.display_len();
                 self.cursor = (self.cursor + 20).min(if len > 0 { len - 1 } else { 0 });
+                self.clear_new_highlight_at_cursor();
                 None
             }
             Action::EnterDir => {
@@ -324,7 +344,12 @@ impl Explorer {
                 .map(|d| format_date(d))
                 .unwrap_or_default();
 
+            let is_new = self.new_files.contains(&entry.path);
+
             let mut style = Style::default();
+            if is_new {
+                style = style.fg(theme.new_file_fg);
+            }
             if entry.is_dir {
                 style = style.fg(theme.dir_fg).add_modifier(Modifier::BOLD);
             }

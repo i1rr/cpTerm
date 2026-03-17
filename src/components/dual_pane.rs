@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
@@ -119,6 +120,47 @@ impl DualPane {
     pub fn refresh_both(&mut self) {
         self.left.refresh();
         self.right.refresh();
+    }
+
+    /// Mark paths as "new files" in whichever explorer pane contains them.
+    /// These files will be highlighted until the user focuses on them.
+    pub fn mark_new_files(&mut self, paths: &[PathBuf]) {
+        for path in paths {
+            let parent = path.parent().map(|p| p.to_path_buf());
+            if let PaneContent::Explorer(e) = &mut self.left {
+                if parent.as_ref() == Some(&e.current_dir) {
+                    e.new_files.insert(path.clone());
+                }
+            }
+            if let PaneContent::Explorer(e) = &mut self.right {
+                if parent.as_ref() == Some(&e.current_dir) {
+                    e.new_files.insert(path.clone());
+                }
+            }
+        }
+    }
+
+    /// Snapshot file names in a directory across both panes (for diff after extraction).
+    pub fn snapshot_dir(&self, dir: &std::path::Path) -> HashSet<PathBuf> {
+        let mut paths = HashSet::new();
+        for pane in [&self.left, &self.right] {
+            if let PaneContent::Explorer(e) = pane {
+                if e.current_dir == dir {
+                    for entry in &e.entries {
+                        paths.insert(entry.path.clone());
+                    }
+                }
+            }
+        }
+        if paths.is_empty() {
+            // Dir not currently shown, read it directly
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for entry in rd.flatten() {
+                    paths.insert(entry.path());
+                }
+            }
+        }
+        paths
     }
 
     pub fn open_editor_in_active(&mut self, path: PathBuf) -> Result<(), String> {

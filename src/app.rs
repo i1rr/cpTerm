@@ -30,6 +30,15 @@ pub enum InputMode {
     MkDir(String),
     CreateFile(String),
     CreateTypeChoice,
+    /// Choose how to unpack: (E)xtract here, create (F)older, (C)ustom path.
+    UnpackChoice {
+        archive: PathBuf,
+    },
+    /// Typing a custom extraction path.
+    UnpackCustomPath {
+        archive: PathBuf,
+        text: String,
+    },
     Command(String),
     TaskOutput,
     ContextMenu(ContextMenuState),
@@ -68,6 +77,10 @@ pub struct App {
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
     pending_op: Option<PendingOp>,
+    /// Paths that should be highlighted as "new" after the current operation completes.
+    pending_new_files: Vec<PathBuf>,
+    /// Snapshot of files before archive extraction, for diffing after.
+    pre_extract_snapshot: Option<(PathBuf, std::collections::HashSet<PathBuf>)>,
     /// Path to open in $PAGER after the next render cycle (requires TUI suspend).
     viewer_request: Option<PathBuf>,
 }
@@ -95,6 +108,8 @@ impl App {
             action_tx,
             action_rx,
             pending_op: None,
+            pending_new_files: Vec::new(),
+            pre_extract_snapshot: None,
             viewer_request: None,
         }
     }
@@ -240,6 +255,30 @@ impl App {
                 return match key.code {
                     KeyCode::Char('f') | KeyCode::Char('F') => Action::CreateFile,
                     KeyCode::Char('d') | KeyCode::Char('D') => Action::MkDir,
+                    KeyCode::Esc => Action::InputCancel,
+                    _ => Action::Noop,
+                };
+            }
+            InputMode::UnpackChoice { .. } => {
+                return match key.code {
+                    KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+                        Action::UnpackArchive
+                    }
+                    KeyCode::Char('f') | KeyCode::Char('F') => Action::UnpackArchiveTo {
+                        dest: PathBuf::new(), // sentinel: "create folder" mode
+                    },
+                    KeyCode::Char('c') | KeyCode::Char('C') => Action::UnpackArchiveTo {
+                        dest: PathBuf::from("\x00"), // sentinel: switch to custom path input
+                    },
+                    KeyCode::Esc => Action::InputCancel,
+                    _ => Action::Noop,
+                };
+            }
+            InputMode::UnpackCustomPath { .. } => {
+                return match key.code {
+                    KeyCode::Char(c) => Action::InputChar(c),
+                    KeyCode::Backspace => Action::InputBackspace,
+                    KeyCode::Enter => Action::InputConfirm,
                     KeyCode::Esc => Action::InputCancel,
                     _ => Action::Noop,
                 };
@@ -423,8 +462,31 @@ impl App {
             if let Some(ref mut task) = self.task {
                 task.finish(code);
             }
+
+            // Diff pre-extraction snapshot to find new files for highlighting
+            let snapshot = self.pre_extract_snapshot.take();
+
             // Refresh both panes so newly extracted files appear
             self.dual_pane.refresh_both();
+
+            // Mark new files that appeared after extraction
+            if code == 0 {
+                if let Some((dir, old_files)) = snapshot {
+                    let mut new_paths = Vec::new();
+                    if let Ok(rd) = std::fs::read_dir(&dir) {
+                        for entry in rd.flatten() {
+                            let path = entry.path();
+                            if !old_files.contains(&path) {
+                                new_paths.push(path);
+                            }
+                        }
+                    }
+                    if !new_paths.is_empty() {
+                        log::debug!("marking {} new files in {}", new_paths.len(), dir.display());
+                        self.dual_pane.mark_new_files(&new_paths);
+                    }
+                }
+            }
             return;
         }
         if let Action::TaskError(ref msg) = action {
@@ -761,49 +823,54 @@ impl App {
                 }
             }
             Action::UnpackArchive => {
-                if let Some(entry) = self
+                // If we're in UnpackChoice mode, extract to archive's parent dir.
+                // Otherwise show the choice dialog.
+                if let InputMode::UnpackChoice { ref archive } = self.input_mode {
+                    let archive = archive.clone();
+                    let dest = archive
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| self.dual_pane.active_dir());
+                    self.do_unpack(&archive, &dest);
+                } else if let Some(entry) = self
                     .dual_pane
                     .active_explorer()
                     .and_then(|e| e.current_entry())
                 {
                     if !entry.is_dir {
-                        // Extract to same directory as the archive file
-                        let dest = entry
-                            .path
+                        self.input_mode = InputMode::UnpackChoice {
+                            archive: entry.path.clone(),
+                        };
+                    }
+                }
+            }
+            Action::UnpackArchiveTo { dest } => {
+                if let InputMode::UnpackChoice { ref archive } = self.input_mode {
+                    let archive = archive.clone();
+                    if dest.as_os_str() == "\x00" {
+                        // Switch to custom path input
+                        let default_path = archive
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        self.input_mode = InputMode::UnpackCustomPath {
+                            archive,
+                            text: default_path,
+                        };
+                    } else {
+                        // Create folder mode: use archive stem as subfolder name
+                        let parent = archive
                             .parent()
                             .map(|p| p.to_path_buf())
                             .unwrap_or_else(|| self.dual_pane.active_dir());
-                        let cwd = self.dual_pane.active_dir();
-                        log::debug!(
-                            "unpack: archive={}, dest={}, cwd={}, active_pane={:?}",
-                            entry.path.display(),
-                            dest.display(),
-                            cwd.display(),
-                            self.dual_pane.active
-                        );
-                        match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
-                            Ok(unpack_cmd) => {
-                                log::debug!("unpack: resolved command: {:?}", unpack_cmd);
-                                let tx = self.action_tx.clone();
-                                let label = unpack_cmd.display();
-                                self.task = Some(TaskState::new(&label));
-                                self.input_mode = InputMode::TaskOutput;
-                                match unpack_cmd {
-                                    crate::fs::archive::UnpackCommand::Shell(cmd) => {
-                                        log::debug!("unpack: spawning shell task in cwd={}", cwd.display());
-                                        tokio::spawn(task::run_task(cmd, cwd, tx));
-                                    }
-                                    crate::fs::archive::UnpackCommand::Direct { program, args } => {
-                                        log::debug!("unpack: spawning direct task: {} {:?} in cwd={}", program, args, cwd.display());
-                                        tokio::spawn(task::run_task_direct(program, args, cwd, tx));
-                                    }
-                                }
-                            }
-                            Err(msg) => {
-                                log::debug!("unpack: resolve error: {}", msg);
-                                self.dialog = Some(Dialog::error(msg));
-                            }
-                        }
+                        let stem = archive
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "extracted".to_string());
+                        // Strip double extensions like .tar.gz
+                        let stem = stem.strip_suffix(".tar").unwrap_or(&stem).to_string();
+                        let folder_dest = parent.join(&stem);
+                        self.do_unpack(&archive, &folder_dest);
                     }
                 }
             }
@@ -860,7 +927,8 @@ impl App {
                 InputMode::Rename(ref mut text)
                 | InputMode::MkDir(ref mut text)
                 | InputMode::CreateFile(ref mut text)
-                | InputMode::Command(ref mut text) => {
+                | InputMode::Command(ref mut text)
+                | InputMode::UnpackCustomPath { ref mut text, .. } => {
                     text.push(ch);
                 }
                 _ => {}
@@ -869,7 +937,8 @@ impl App {
                 InputMode::Rename(ref mut text)
                 | InputMode::MkDir(ref mut text)
                 | InputMode::CreateFile(ref mut text)
-                | InputMode::Command(ref mut text) => {
+                | InputMode::Command(ref mut text)
+                | InputMode::UnpackCustomPath { ref mut text, .. } => {
                     text.pop();
                 }
                 _ => {}
@@ -892,6 +961,14 @@ impl App {
                         // do_command sets input_mode itself (Normal or TaskOutput)
                         self.do_command(&cmd);
                     }
+                    InputMode::UnpackCustomPath { archive, text } => {
+                        let dest = PathBuf::from(text.trim());
+                        if dest.as_os_str().is_empty() {
+                            self.input_mode = InputMode::Normal;
+                        } else {
+                            self.do_unpack(&archive, &dest);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -907,7 +984,11 @@ impl App {
                 self.input_mode = InputMode::Normal;
             }
             Action::OperationComplete(msg) => {
+                let new_files = std::mem::take(&mut self.pending_new_files);
                 self.dual_pane.refresh_both();
+                if !new_files.is_empty() {
+                    self.dual_pane.mark_new_files(&new_files);
+                }
                 self.dialog = Some(Dialog::info(msg));
             }
             Action::OperationError(msg) => {
@@ -955,7 +1036,7 @@ impl App {
                 self.dialog = Some(Dialog::info(
                     "(Up/Down to scroll this help)\n\
                      \n\
-                     Usage: cpt [left-path] [right-path]\n\
+                     Usage: cpt [left-path] [right-path] [--debug]\n\
                      \n\
                      Shortcuts:\n\
                      Up/Down - navigate\n\
@@ -986,6 +1067,18 @@ impl App {
                      Ctrl+Q or Esc - close editor\n\
                      Tab - switch to other pane\n\
                      Ctrl+I - insert tab character\n\
+                     \n\
+                     Archive extraction:\n\
+                     Enter on archive shows extraction options:\n\
+                     [E] extract here, [F] create folder, [C] custom path\n\
+                     \n\
+                     New files (copied, moved, extracted) are highlighted\n\
+                     until focused with cursor or app restart.\n\
+                     \n\
+                     Debug mode:\n\
+                     --debug flag enables diagnostic logging to file.\n\
+                     Log location: %APPDATA%/cpt/cpt.log (Windows)\n\
+                                   ~/.config/cpt/cpt.log (Linux/macOS)\n\
                      \n\
                      Type any character for command line (cd, shell commands)",
                 ));
@@ -1430,14 +1523,16 @@ impl App {
         }
     }
 
-    fn execute_op(&self, op: PendingOp) {
+    fn execute_op(&mut self, op: PendingOp) {
         let tx = self.action_tx.clone();
         match op {
-            PendingOp::Copy { pairs } => {
-                tokio::spawn(ops::copy_entries(pairs, tx));
+            PendingOp::Copy { ref pairs } => {
+                self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
+                tokio::spawn(ops::copy_entries(pairs.clone(), tx));
             }
-            PendingOp::Move { pairs } => {
-                tokio::spawn(ops::move_entries(pairs, tx));
+            PendingOp::Move { ref pairs } => {
+                self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
+                tokio::spawn(ops::move_entries(pairs.clone(), tx));
             }
             PendingOp::Delete(sources) => {
                 tokio::spawn(ops::delete_entries(sources, tx));
@@ -1510,6 +1605,48 @@ impl App {
         }
         if let Some(e) = self.dual_pane.active_explorer_mut() {
             e.refresh();
+        }
+    }
+
+    fn do_unpack(&mut self, archive: &PathBuf, dest: &PathBuf) {
+        // Snapshot the destination directory before extraction for new-file highlighting
+        let snapshot = self.dual_pane.snapshot_dir(dest);
+        self.pre_extract_snapshot = Some((dest.clone(), snapshot));
+
+        let cwd = self.dual_pane.active_dir();
+        log::debug!(
+            "unpack: archive={}, dest={}, cwd={}, active_pane={:?}",
+            archive.display(),
+            dest.display(),
+            cwd.display(),
+            self.dual_pane.active
+        );
+        match crate::fs::archive::resolve_unpack_command(archive, dest) {
+            Ok(unpack_cmd) => {
+                log::debug!("unpack: resolved command: {:?}", unpack_cmd);
+                let tx = self.action_tx.clone();
+                let label = unpack_cmd.display();
+                self.task = Some(TaskState::new(&label));
+                self.input_mode = InputMode::TaskOutput;
+                match unpack_cmd {
+                    crate::fs::archive::UnpackCommand::Shell(cmd) => {
+                        log::debug!("unpack: spawning shell task in cwd={}", cwd.display());
+                        tokio::spawn(task::run_task(cmd, cwd, tx));
+                    }
+                    crate::fs::archive::UnpackCommand::Direct { program, args } => {
+                        log::debug!(
+                            "unpack: spawning direct task: {} {:?} in cwd={}",
+                            program, args, cwd.display()
+                        );
+                        tokio::spawn(task::run_task_direct(program, args, cwd, tx));
+                    }
+                }
+            }
+            Err(msg) => {
+                log::debug!("unpack: resolve error: {}", msg);
+                self.input_mode = InputMode::Normal;
+                self.dialog = Some(Dialog::error(msg));
+            }
         }
     }
 
@@ -1872,5 +2009,105 @@ mod tests {
         // When naming is active, Enter maps to InputConfirm
         let action = app.map_key(key(KeyCode::Enter));
         assert!(matches!(action, Action::InputConfirm));
+    }
+
+    // ── UnpackChoice mode ─────────────────────────────────────
+
+    #[test]
+    fn unpack_choice_e_maps_to_unpack_archive() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('e'))),
+            Action::UnpackArchive
+        ));
+    }
+
+    #[test]
+    fn unpack_choice_enter_maps_to_unpack_archive() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Enter)),
+            Action::UnpackArchive
+        ));
+    }
+
+    #[test]
+    fn unpack_choice_f_maps_to_unpack_archive_to() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('f'))),
+            Action::UnpackArchiveTo { .. }
+        ));
+    }
+
+    #[test]
+    fn unpack_choice_c_maps_to_unpack_archive_to() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('c'))),
+            Action::UnpackArchiveTo { .. }
+        ));
+    }
+
+    #[test]
+    fn unpack_choice_esc_cancels() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Esc)),
+            Action::InputCancel
+        ));
+    }
+
+    #[test]
+    fn unpack_choice_other_keys_noop() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackChoice {
+            archive: PathBuf::from("/test/archive.zip"),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('x'))),
+            Action::Noop
+        ));
+    }
+
+    #[test]
+    fn unpack_custom_path_input_char() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackCustomPath {
+            archive: PathBuf::from("/test/archive.zip"),
+            text: String::new(),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('a'))),
+            Action::InputChar('a')
+        ));
+    }
+
+    #[test]
+    fn unpack_custom_path_enter_confirms() {
+        let mut app = make_app();
+        app.input_mode = InputMode::UnpackCustomPath {
+            archive: PathBuf::from("/test/archive.zip"),
+            text: String::new(),
+        };
+        assert!(matches!(
+            app.map_key(key(KeyCode::Enter)),
+            Action::InputConfirm
+        ));
     }
 }

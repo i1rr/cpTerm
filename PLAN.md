@@ -25,11 +25,11 @@ src/
   tui.rs               - terminal init/restore; suspend()/resume() for editor handoff
   action.rs            - Action enum, all app messages
   event.rs             - event source: crossterm events + tick timer
-  cli.rs               - clap CLI definitions
+  cli.rs               - clap CLI definitions (--debug flag)
   config.rs            - session persistence via confy
   util.rs              - format_size(), format_date(), path helpers, UNC prefix stripping,
-                         is_archive(), find_sevenzip()
-  logger.rs            - in-memory session logger, dumps to stderr and log file on quit
+                         is_archive(), find_sevenzip(), is_text_file()
+  logger.rs            - session logger with optional --debug mode (real-time file logging)
   task.rs              - TaskState, run_task() async task runner with live output streaming
   bookmarks.rs         - BookmarkList struct, load/save, add/remove
   components/
@@ -170,11 +170,15 @@ coverage but are not used by the main binary at runtime.
 - `resolve_pager()`, `open_in_viewer()` in `src/fs/open.rs`
 
 ### Archive Unpack (done)
-- Enter on an archive triggers `Action::UnpackArchive`
+- Enter on an archive shows extraction choice dialog:
+  - [E] Extract here - extracts to same directory as the archive
+  - [F] Create folder - creates a subfolder named after the archive (strips .tar from .tar.gz)
+  - [C] Custom path - type a custom extraction destination
+- `InputMode::UnpackChoice` and `InputMode::UnpackCustomPath` handle the interaction
 - `resolve_unpack_command(archive, dest)` in `src/fs/archive.rs` selects the best available
   tool for each format and OS (see tool matrix above)
 - Extraction runs as an async background task with live output in the task window
-- Destination: same directory as the archive file
+- Newly extracted files are highlighted in the explorer (see New File Highlighting)
 - Supported formats: .zip, .tar, .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.xz, .7z, .rar,
   .gz, .bz2, .xz
 
@@ -192,8 +196,24 @@ coverage but are not used by the main binary at runtime.
 - Bookmarked paths that no longer exist are shown dimmed; Enter shows error
 - Persisted alongside session config across restarts
 
+### New File Highlighting (done)
+- Files that are newly created (copy, move, extract) are highlighted with `new_file_fg` color
+- Highlighting is cleared when the user moves the cursor onto the file
+- Highlighting is cleared on app restart (not persisted)
+- `Explorer.new_files: HashSet<PathBuf>` tracks highlighted paths per pane
+- For copy/move: target paths from operation pairs are marked after `OperationComplete`
+- For extraction: directory is snapshotted before extraction, diffed after `TaskComplete`
+- `DualPane.mark_new_files()` applies highlights to the correct pane(s)
+- `DualPane.snapshot_dir()` captures pre-extraction state for diffing
+
+### Debug Mode (done)
+- `cpt --debug` enables debug-level logging to cpt.log in real-time
+- Log location: `%APPDATA%/cpt/cpt.log` (Windows), `~/.config/cpt/cpt.log` (Linux/macOS)
+- Logs archive commands, file type detection, task output lines, exit codes
+- Log file path printed to stderr on exit
+
 ### Theme Manager (done)
-- `src/theme.rs`: Theme struct with 25 color fields, 2 built-in themes, file-based storage
+- `src/theme.rs`: Theme struct with 26 color fields, 2 built-in themes, file-based storage
 - `src/components/theme_editor.rs`: interactive editor with 256-color picker, live preview
 - Ctrl+T opens theme editor:
   - Enter: 16x16 color picker (all 256 terminal colors, live preview as you navigate)
