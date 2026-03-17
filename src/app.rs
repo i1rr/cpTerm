@@ -765,11 +765,19 @@ impl App {
                         let dest = self.dual_pane.inactive_dir();
                         let cwd = self.dual_pane.active_dir();
                         match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
-                            Ok(cmd) => {
+                            Ok(unpack_cmd) => {
                                 let tx = self.action_tx.clone();
-                                self.task = Some(TaskState::new(&cmd));
+                                let label = unpack_cmd.display();
+                                self.task = Some(TaskState::new(&label));
                                 self.input_mode = InputMode::TaskOutput;
-                                tokio::spawn(task::run_task(cmd, cwd, tx));
+                                match unpack_cmd {
+                                    crate::fs::archive::UnpackCommand::Shell(cmd) => {
+                                        tokio::spawn(task::run_task(cmd, cwd, tx));
+                                    }
+                                    crate::fs::archive::UnpackCommand::Direct { program, args } => {
+                                        tokio::spawn(task::run_task_direct(program, args, cwd, tx));
+                                    }
+                                }
                             }
                             Err(msg) => {
                                 self.dialog = Some(Dialog::error(msg));

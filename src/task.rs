@@ -125,3 +125,69 @@ pub async fn run_task(cmd: String, cwd: PathBuf, tx: mpsc::UnboundedSender<Actio
     let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
     let _ = tx.send(Action::TaskComplete(exit_code));
 }
+
+/// Spawn a program with explicit arguments (no shell interpolation).
+/// This avoids quoting issues with `cmd /C` on Windows.
+pub async fn run_task_direct(
+    program: String,
+    args: Vec<String>,
+    cwd: PathBuf,
+    tx: mpsc::UnboundedSender<Action>,
+) {
+    let label = format!(
+        "{} {}",
+        program,
+        args.iter()
+            .map(|a| if a.contains(' ') {
+                format!("\"{}\"", a)
+            } else {
+                a.clone()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    let mut child = match tokio::process::Command::new(&program)
+        .args(&args)
+        .current_dir(&cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(Action::TaskError(format!(
+                "failed to start '{}': {}",
+                label, e
+            )));
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+
+    let tx_out = tx.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx_out.send(Action::TaskLine(line)).is_err() {
+                break;
+            }
+        }
+    });
+
+    let tx_err = tx.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx_err.send(Action::TaskLine(line)).is_err() {
+                break;
+            }
+        }
+    });
+
+    let _ = tokio::join!(stdout_task, stderr_task);
+    let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
+    let _ = tx.send(Action::TaskComplete(exit_code));
+}

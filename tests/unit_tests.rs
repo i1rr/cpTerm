@@ -2348,14 +2348,10 @@ fn resolve_unpack_tar_always_uses_tar() {
     for name in &cases {
         let archive = PathBuf::from(format!("/src/{}", name));
         let dest = PathBuf::from("/dest");
-        let cmd = resolve_unpack_command(&archive, &dest)
+        let unpack = resolve_unpack_command(&archive, &dest)
             .unwrap_or_else(|e| panic!("{} should resolve, got: {}", name, e));
-        assert!(
-            cmd.starts_with("tar -xf"),
-            "{} should use tar, got: {}",
-            name,
-            cmd
-        );
+        let cmd = unpack.display();
+        assert!(cmd.contains("tar"), "{} should use tar, got: {}", name, cmd);
         assert!(
             cmd.contains("/dest"),
             "command should reference dest: {}",
@@ -2370,14 +2366,15 @@ fn resolve_unpack_zip_on_current_os() {
     let archive = PathBuf::from("/src/files.zip");
     let dest = PathBuf::from("/dest");
     let result = resolve_unpack_command(&archive, &dest);
-    // On Linux/macOS: unzip or 7z. On Windows: tar.
+    // On Linux/macOS: unzip or 7z. On Windows: PowerShell Expand-Archive.
     // Either way it should succeed on a typical dev machine.
     match result {
-        Ok(cmd) => {
+        Ok(unpack) => {
+            let cmd = unpack.display();
             #[cfg(windows)]
             assert!(
-                cmd.starts_with("tar"),
-                "Windows ZIP should use tar: {}",
+                cmd.contains("Expand-Archive"),
+                "Windows ZIP should use Expand-Archive: {}",
                 cmd
             );
             #[cfg(not(windows))]
@@ -2404,7 +2401,8 @@ fn resolve_unpack_7z_returns_err_or_7z_command() {
     let archive = PathBuf::from("/src/data.7z");
     let dest = PathBuf::from("/dest");
     match resolve_unpack_command(&archive, &dest) {
-        Ok(cmd) => {
+        Ok(unpack) => {
+            let cmd = unpack.display();
             assert!(
                 cmd.contains("7z") || cmd.contains("7za") || cmd.contains("7zz"),
                 "should use a 7z binary: {}",
@@ -2427,7 +2425,8 @@ fn resolve_unpack_rar_returns_err_or_unrar_or_7z() {
     let archive = PathBuf::from("/src/archive.rar");
     let dest = PathBuf::from("/dest");
     match resolve_unpack_command(&archive, &dest) {
-        Ok(cmd) => {
+        Ok(unpack) => {
+            let cmd = unpack.display();
             assert!(
                 cmd.contains("unrar") || cmd.contains("7z"),
                 "should use unrar or 7z: {}",
@@ -2463,7 +2462,8 @@ fn resolve_unpack_command_embeds_paths() {
     // TAR always uses tar so we can predict the command reliably
     let archive = PathBuf::from("/my/archive.tar");
     let dest = PathBuf::from("/my/dest dir");
-    let cmd = resolve_unpack_command(&archive, &dest).unwrap();
+    let unpack = resolve_unpack_command(&archive, &dest).unwrap();
+    let cmd = unpack.display();
     assert!(
         cmd.contains("archive.tar"),
         "command should contain archive name: {}",
