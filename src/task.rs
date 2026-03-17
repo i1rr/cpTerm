@@ -90,7 +90,10 @@ pub async fn run_task(cmd: String, cwd: PathBuf, tx: mpsc::UnboundedSender<Actio
     {
         Ok(c) => c,
         Err(e) => {
-            let _ = tx.send(Action::TaskError(format!("failed to start '{}': {}", cmd, e)));
+            let _ = tx.send(Action::TaskError(format!(
+                "failed to start '{}': {}",
+                cmd, e
+            )));
             return;
         }
     };
@@ -119,11 +122,6 @@ pub async fn run_task(cmd: String, cwd: PathBuf, tx: mpsc::UnboundedSender<Actio
     });
 
     let _ = tokio::join!(stdout_task, stderr_task);
-    let exit_code = child
-        .wait()
-        .await
-        .ok()
-        .and_then(|s| s.code())
-        .unwrap_or(-1);
+    let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
     let _ = tx.send(Action::TaskComplete(exit_code));
 }

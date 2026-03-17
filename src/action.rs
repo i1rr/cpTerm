@@ -30,7 +30,9 @@ pub enum Action {
     DeleteSelected,
     OpenFile,
     /// Open `path` in the embedded in-pane editor.
-    OpenEditor { path: PathBuf },
+    OpenEditor {
+        path: PathBuf,
+    },
     /// Close the active editor pane (restores the explorer).
     CloseEditor,
     /// Save the active editor pane's content to disk, then close it.
@@ -43,6 +45,12 @@ pub enum Action {
     EditorKeyInput(crossterm::event::KeyEvent),
     ViewFile,
     UnpackArchive,
+    /// Open the context menu for the current file.
+    OpenContextMenu,
+    /// Open the file as text in the embedded editor (forced, even if binary).
+    OpenAsText,
+    /// Open the file/directory with the OS default application.
+    OpenWithDefault,
     Rename,
     MkDir,
     CreateFile,
@@ -57,7 +65,10 @@ pub enum Action {
     FilterConfirm,
     FilterCancel,
     // Async feedback
-    OperationProgress { done: u64, total: u64 },
+    OperationProgress {
+        done: u64,
+        total: u64,
+    },
     OperationComplete(String),
     OperationError(String),
     // UI

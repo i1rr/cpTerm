@@ -22,9 +22,10 @@ pub fn draw_status_bar(
         let path = editor.path.to_string_lossy().to_string();
         let (row, col) = editor.cursor();
         let info = format!("{}  Ln {}, Col {}", path, row + 1, col + 1);
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(info, Style::default().fg(theme.path_fg)),
-        ]))
+        let paragraph = Paragraph::new(Line::from(vec![Span::styled(
+            info,
+            Style::default().fg(theme.path_fg),
+        )]))
         .style(Style::default().bg(theme.status_bg).fg(theme.status_fg));
         frame.render_widget(paragraph, area);
         return;
@@ -37,13 +38,17 @@ pub fn draw_status_bar(
     };
     let path = explorer.current_dir.to_string_lossy().to_string();
 
-    let mut spans = vec![
-        Span::styled(format!("{}> ", path), Style::default().fg(theme.path_fg)),
-    ];
+    let mut spans = vec![Span::styled(
+        format!("{}> ", path),
+        Style::default().fg(theme.path_fg),
+    )];
 
     match input_mode {
         InputMode::Command(text) => {
-            spans.push(Span::styled(text.as_str(), Style::default().fg(theme.status_fg)));
+            spans.push(Span::styled(
+                text.as_str(),
+                Style::default().fg(theme.status_fg),
+            ));
             spans.push(Span::styled("_", Style::default().fg(theme.path_fg)));
         }
         _ => {

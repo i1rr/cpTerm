@@ -44,13 +44,7 @@ impl BookmarkPanel {
         }
     }
 
-    pub fn draw(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        bookmarks: &BookmarkList,
-        theme: &Theme,
-    ) {
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, bookmarks: &BookmarkList, theme: &Theme) {
         let entries = &bookmarks.entries;
         let count = entries.len() as u16;
         // Panel height: entries + 2 borders, minimum 6, capped to available space.
@@ -81,8 +75,7 @@ impl BookmarkPanel {
 
                 if i == self.cursor {
                     let hl = Style::default().add_modifier(Modifier::REVERSED);
-                    let dim_hl =
-                        Style::default().add_modifier(Modifier::REVERSED | Modifier::DIM);
+                    let dim_hl = Style::default().add_modifier(Modifier::REVERSED | Modifier::DIM);
                     lines.push(Line::from(vec![
                         Span::styled(format!(" > {:<20}", entry.name), hl),
                         if exists {

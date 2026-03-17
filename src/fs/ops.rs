@@ -56,10 +56,7 @@ pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
 }
 
 /// Copy a list of (source, target) pairs.
-pub async fn copy_entries(
-    pairs: Vec<(PathBuf, PathBuf)>,
-    tx: mpsc::UnboundedSender<Action>,
-) {
+pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
@@ -93,10 +90,7 @@ pub async fn copy_entries(
 }
 
 /// Move a list of (source, target) pairs.
-pub async fn move_entries(
-    pairs: Vec<(PathBuf, PathBuf)>,
-    tx: mpsc::UnboundedSender<Action>,
-) {
+pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
@@ -128,10 +122,7 @@ pub async fn move_entries(
         }
     }
 
-    let _ = tx.send(Action::OperationComplete(format!(
-        "Moved {} item(s)",
-        done
-    )));
+    let _ = tx.send(Action::OperationComplete(format!("Moved {} item(s)", done)));
 }
 
 /// Delete a list of files/dirs.

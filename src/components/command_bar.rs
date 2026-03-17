@@ -129,6 +129,14 @@ pub fn draw_command_bar(
             Span::styled("_", input_style),
             Span::raw("  (Enter to confirm, Esc to cancel)"),
         ]),
+        InputMode::ContextMenu(_) => Line::from(vec![
+            Span::styled("Up/Down", hint_style),
+            Span::raw(":navigate  "),
+            Span::styled("Enter", hint_style),
+            Span::raw(":select  "),
+            Span::styled("Esc", hint_style),
+            Span::raw(":cancel"),
+        ]),
         InputMode::Command(_) => Line::from(vec![
             Span::styled("Enter", hint_style),
             Span::raw(":Run  "),

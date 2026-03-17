@@ -36,6 +36,48 @@ pub fn format_date(dt: &DateTime<Local>) -> String {
     dt.format("%m-%d %H:%M").to_string()
 }
 
+/// Return true if the file at `path` appears to be a text file that can be
+/// opened in the embedded editor. Uses a two-step check:
+/// 1. Known binary extensions are rejected immediately.
+/// 2. The first 8 KB of the file are scanned for null bytes - a reliable
+///    heuristic used by git, file(1), and most editors.
+pub fn is_text_file(path: &std::path::Path) -> bool {
+    // Known binary extensions - skip the content probe for speed.
+    const BINARY_EXTS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "tif", "tiff", "mp3", "mp4",
+        "avi", "mkv", "mov", "flv", "wav", "flac", "ogg", "aac", "wma", "wmv", "exe", "dll", "so",
+        "dylib", "bin", "obj", "o", "a", "lib", "class", "pdf", "doc", "docx", "xls", "xlsx",
+        "ppt", "pptx", "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "zst", "lz4",
+        "iso", "img", "dmg", "msi", "deb", "rpm", "ttf", "otf", "woff", "woff2", "eot", "sqlite",
+        "db", "mdb", "pyc", "pyo", "wasm",
+    ];
+
+    if let Some(ext) = path.extension() {
+        let ext = ext.to_string_lossy().to_lowercase();
+        if BINARY_EXTS.contains(&ext.as_str()) {
+            return false;
+        }
+    }
+
+    // Read the first 8 KB and check for null bytes.
+    match std::fs::File::open(path) {
+        Ok(mut f) => {
+            use std::io::Read;
+            let mut buf = [0u8; 8192];
+            let n = match f.read(&mut buf) {
+                Ok(n) => n,
+                Err(_) => return false,
+            };
+            // Empty files are valid text files.
+            if n == 0 {
+                return true;
+            }
+            !buf[..n].contains(&0)
+        }
+        Err(_) => false,
+    }
+}
+
 /// Return true if the filename looks like a supported archive.
 pub fn is_archive(name: &str) -> bool {
     let lower = name.to_lowercase();

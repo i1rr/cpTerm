@@ -382,21 +382,20 @@ impl Theme {
     }
 
     pub fn save_to_file(&self, name: &str) -> Result<PathBuf, String> {
-        let dir = Self::themes_dir()
-            .ok_or_else(|| "could not determine themes directory".to_string())?;
+        let dir =
+            Self::themes_dir().ok_or_else(|| "could not determine themes directory".to_string())?;
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("failed to create themes directory: {}", e))?;
         let path = dir.join(format!("{}.toml", name));
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize theme: {}", e))?;
-        std::fs::write(&path, content)
-            .map_err(|e| format!("failed to write theme file: {}", e))?;
+        std::fs::write(&path, content).map_err(|e| format!("failed to write theme file: {}", e))?;
         Ok(path)
     }
 
     pub fn delete_file(name: &str) -> Result<(), String> {
-        let dir = Self::themes_dir()
-            .ok_or_else(|| "could not determine themes directory".to_string())?;
+        let dir =
+            Self::themes_dir().ok_or_else(|| "could not determine themes directory".to_string())?;
         let path = dir.join(format!("{}.toml", name));
         if path.exists() {
             std::fs::remove_file(&path)
@@ -404,5 +403,4 @@ impl Theme {
         }
         Ok(())
     }
-
 }

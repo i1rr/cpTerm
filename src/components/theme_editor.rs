@@ -105,8 +105,7 @@ impl ColorPicker {
 
         let color = self.current_color();
         let name = color_display_name(color);
-        let idx_display = self
-            .grid[self.row][self.col]
+        let idx_display = self.grid[self.row][self.col]
             .map(|i| i.to_string())
             .unwrap_or_default();
 

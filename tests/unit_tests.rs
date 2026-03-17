@@ -244,7 +244,10 @@ async fn copy_entries_copies_files() {
 
     assert!(dst_dir.join("file1.txt").exists());
     assert!(dst_dir.join("file2.txt").exists());
-    assert_eq!(fs::read_to_string(dst_dir.join("file1.txt")).unwrap(), "content1");
+    assert_eq!(
+        fs::read_to_string(dst_dir.join("file1.txt")).unwrap(),
+        "content1"
+    );
 
     fs::remove_dir_all(&src_dir).ok();
     fs::remove_dir_all(&dst_dir).ok();
@@ -805,7 +808,10 @@ fn explorer_enter_on_file_returns_open_editor() {
     explorer.handle_action(&cpt::action::Action::MoveDown); // onto the file
 
     let result = explorer.handle_action(&cpt::action::Action::EnterDir);
-    assert!(matches!(result, Some(cpt::action::Action::OpenEditor { .. })));
+    assert!(matches!(
+        result,
+        Some(cpt::action::Action::OpenEditor { .. })
+    ));
 
     fs::remove_dir_all(&dir).ok();
 }
@@ -1117,8 +1123,14 @@ fn build_pairs_creates_correct_targets() {
     let sources = vec![PathBuf::from("/src/a.txt"), PathBuf::from("/src/b.txt")];
     let pairs = cpt::fs::ops::build_pairs(&sources, &dest);
     assert_eq!(pairs.len(), 2);
-    assert_eq!(pairs[0], (PathBuf::from("/src/a.txt"), PathBuf::from("/dest/a.txt")));
-    assert_eq!(pairs[1], (PathBuf::from("/src/b.txt"), PathBuf::from("/dest/b.txt")));
+    assert_eq!(
+        pairs[0],
+        (PathBuf::from("/src/a.txt"), PathBuf::from("/dest/a.txt"))
+    );
+    assert_eq!(
+        pairs[1],
+        (PathBuf::from("/src/b.txt"), PathBuf::from("/dest/b.txt"))
+    );
 }
 
 #[test]
@@ -1209,7 +1221,10 @@ async fn copy_with_rename_avoids_overwrite() {
     while let Ok(_) = rx.try_recv() {}
 
     // Original preserved
-    assert_eq!(fs::read_to_string(dst_dir.join("file.txt")).unwrap(), "original");
+    assert_eq!(
+        fs::read_to_string(dst_dir.join("file.txt")).unwrap(),
+        "original"
+    );
     // New file renamed
     assert_eq!(
         fs::read_to_string(dst_dir.join("file (1).txt")).unwrap(),
@@ -1234,7 +1249,10 @@ async fn copy_overwrite_replaces_existing() {
     cpt::fs::ops::copy_entries(pairs, tx).await;
     while let Ok(_) = rx.try_recv() {}
 
-    assert_eq!(fs::read_to_string(dst_dir.join("file.txt")).unwrap(), "updated");
+    assert_eq!(
+        fs::read_to_string(dst_dir.join("file.txt")).unwrap(),
+        "updated"
+    );
 
     fs::remove_dir_all(&src_dir).ok();
     fs::remove_dir_all(&dst_dir).ok();
@@ -1457,10 +1475,7 @@ async fn copy_stops_on_first_error() {
     let dst_dir = tempdir("copy_partial_dst");
     fs::write(src_dir.join("good.txt"), "ok").unwrap();
     // Second source doesn't exist
-    let sources = vec![
-        src_dir.join("good.txt"),
-        src_dir.join("nonexistent.txt"),
-    ];
+    let sources = vec![src_dir.join("good.txt"), src_dir.join("nonexistent.txt")];
     let pairs = cpt::fs::ops::build_pairs(&sources, &dst_dir);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1500,22 +1515,34 @@ fn theme_default_and_muted_differ() {
     let d = cpt::theme::Theme::default();
     let m = cpt::theme::Theme::muted();
     // At least border_focused should differ
-    assert_ne!(format!("{:?}", d.border_focused), format!("{:?}", m.border_focused));
+    assert_ne!(
+        format!("{:?}", d.border_focused),
+        format!("{:?}", m.border_focused)
+    );
 }
 
 #[test]
 fn theme_by_name_returns_builtin() {
     let d = cpt::theme::Theme::by_name("default");
-    assert_eq!(format!("{:?}", d.border_focused), format!("{:?}", ratatui::style::Color::Cyan));
+    assert_eq!(
+        format!("{:?}", d.border_focused),
+        format!("{:?}", ratatui::style::Color::Cyan)
+    );
     let m = cpt::theme::Theme::by_name("muted");
-    assert_eq!(format!("{:?}", m.border_focused), format!("{:?}", ratatui::style::Color::White));
+    assert_eq!(
+        format!("{:?}", m.border_focused),
+        format!("{:?}", ratatui::style::Color::White)
+    );
 }
 
 #[test]
 fn theme_by_name_unknown_returns_default() {
     let t = cpt::theme::Theme::by_name("nonexistent");
     let d = cpt::theme::Theme::default();
-    assert_eq!(format!("{:?}", t.border_focused), format!("{:?}", d.border_focused));
+    assert_eq!(
+        format!("{:?}", t.border_focused),
+        format!("{:?}", d.border_focused)
+    );
 }
 
 #[test]
@@ -1528,10 +1555,19 @@ fn theme_is_builtin() {
 #[test]
 fn theme_field_get_set() {
     let mut t = cpt::theme::Theme::default();
-    assert_eq!(format!("{:?}", t.get_field(0)), format!("{:?}", t.border_focused));
+    assert_eq!(
+        format!("{:?}", t.get_field(0)),
+        format!("{:?}", t.border_focused)
+    );
     t.set_field(0, ratatui::style::Color::Red);
-    assert_eq!(format!("{:?}", t.get_field(0)), format!("{:?}", ratatui::style::Color::Red));
-    assert_eq!(format!("{:?}", t.border_focused), format!("{:?}", ratatui::style::Color::Red));
+    assert_eq!(
+        format!("{:?}", t.get_field(0)),
+        format!("{:?}", ratatui::style::Color::Red)
+    );
+    assert_eq!(
+        format!("{:?}", t.border_focused),
+        format!("{:?}", ratatui::style::Color::Red)
+    );
 }
 
 #[test]
@@ -1540,7 +1576,10 @@ fn theme_field_get_set_all_25() {
     for i in 0..cpt::theme::FIELD_COUNT {
         let original = t.get_field(i);
         t.set_field(i, ratatui::style::Color::Magenta);
-        assert_eq!(format!("{:?}", t.get_field(i)), format!("{:?}", ratatui::style::Color::Magenta));
+        assert_eq!(
+            format!("{:?}", t.get_field(i)),
+            format!("{:?}", ratatui::style::Color::Magenta)
+        );
         t.set_field(i, original);
     }
 }
@@ -1549,8 +1588,7 @@ fn theme_field_get_set_all_25() {
 fn theme_serialize_roundtrip_named_colors() {
     let theme = cpt::theme::Theme::default();
     let serialized = toml::to_string_pretty(&theme).expect("serialize failed");
-    let deserialized: cpt::theme::Theme =
-        toml::from_str(&serialized).expect("deserialize failed");
+    let deserialized: cpt::theme::Theme = toml::from_str(&serialized).expect("deserialize failed");
     // Verify all 25 fields match
     for i in 0..cpt::theme::FIELD_COUNT {
         assert_eq!(
@@ -1570,8 +1608,7 @@ fn theme_serialize_roundtrip_indexed_colors() {
     theme.set_field(1, cpt::theme::indexed_to_color(200));
     theme.set_field(2, cpt::theme::indexed_to_color(232));
     let serialized = toml::to_string_pretty(&theme).expect("serialize failed");
-    let deserialized: cpt::theme::Theme =
-        toml::from_str(&serialized).expect("deserialize failed");
+    let deserialized: cpt::theme::Theme = toml::from_str(&serialized).expect("deserialize failed");
     for i in 0..cpt::theme::FIELD_COUNT {
         assert_eq!(
             format!("{:?}", theme.get_field(i)),
@@ -1654,8 +1691,14 @@ fn theme_next_unknown_wraps() {
 
 #[test]
 fn theme_color_display_name_named() {
-    assert_eq!(cpt::theme::color_display_name(ratatui::style::Color::Cyan), "Cyan");
-    assert_eq!(cpt::theme::color_display_name(ratatui::style::Color::Black), "Black");
+    assert_eq!(
+        cpt::theme::color_display_name(ratatui::style::Color::Cyan),
+        "Cyan"
+    );
+    assert_eq!(
+        cpt::theme::color_display_name(ratatui::style::Color::Black),
+        "Black"
+    );
 }
 
 #[test]
@@ -1864,7 +1907,10 @@ async fn run_task_invalid_command_sends_error() {
             _ => {}
         }
     }
-    assert!(got_error_or_complete, "expected TaskError or TaskComplete for bad cwd");
+    assert!(
+        got_error_or_complete,
+        "expected TaskError or TaskComplete for bad cwd"
+    );
 }
 
 #[tokio::test]
@@ -1904,10 +1950,26 @@ fn contrast_fg_dark_named_colors_return_white() {
     use cpt::theme::contrast_fg;
     use ratatui::style::Color;
     // Indices 0-6 and 8 are dark - should return white
-    assert_eq!(contrast_fg(0), Color::White, "index 0 (Black) should give White");
-    assert_eq!(contrast_fg(1), Color::White, "index 1 (Red) should give White");
-    assert_eq!(contrast_fg(4), Color::White, "index 4 (Blue) should give White");
-    assert_eq!(contrast_fg(8), Color::White, "index 8 (DarkGray) should give White");
+    assert_eq!(
+        contrast_fg(0),
+        Color::White,
+        "index 0 (Black) should give White"
+    );
+    assert_eq!(
+        contrast_fg(1),
+        Color::White,
+        "index 1 (Red) should give White"
+    );
+    assert_eq!(
+        contrast_fg(4),
+        Color::White,
+        "index 4 (Blue) should give White"
+    );
+    assert_eq!(
+        contrast_fg(8),
+        Color::White,
+        "index 8 (DarkGray) should give White"
+    );
 }
 
 #[test]
@@ -1915,9 +1977,21 @@ fn contrast_fg_light_named_colors_return_black() {
     use cpt::theme::contrast_fg;
     use ratatui::style::Color;
     // Indices 7 and 9-15 are light - should return black
-    assert_eq!(contrast_fg(7), Color::Black, "index 7 (Gray) should give Black");
-    assert_eq!(contrast_fg(15), Color::Black, "index 15 (White) should give Black");
-    assert_eq!(contrast_fg(11), Color::Black, "index 11 (LightYellow) should give Black");
+    assert_eq!(
+        contrast_fg(7),
+        Color::Black,
+        "index 7 (Gray) should give Black"
+    );
+    assert_eq!(
+        contrast_fg(15),
+        Color::Black,
+        "index 15 (White) should give Black"
+    );
+    assert_eq!(
+        contrast_fg(11),
+        Color::Black,
+        "index 11 (LightYellow) should give Black"
+    );
 }
 
 #[test]
@@ -1988,12 +2062,18 @@ fn task_state_push_line_caps_removes_oldest() {
         task.push_line(format!("line {}", i));
     }
     assert_eq!(task.lines[0], "line 0");
-    assert_eq!(task.lines[cpt::task::MAX_LINES - 1], format!("line {}", cpt::task::MAX_LINES - 1));
+    assert_eq!(
+        task.lines[cpt::task::MAX_LINES - 1],
+        format!("line {}", cpt::task::MAX_LINES - 1)
+    );
 
     // Push one more - line 0 should be evicted
     task.push_line("new line".to_string());
     assert_eq!(task.lines.len(), cpt::task::MAX_LINES);
-    assert_eq!(task.lines[0], "line 1", "oldest line should have been removed");
+    assert_eq!(
+        task.lines[0], "line 1",
+        "oldest line should have been removed"
+    );
     assert_eq!(task.lines[cpt::task::MAX_LINES - 1], "new line");
 }
 
@@ -2010,7 +2090,10 @@ fn task_state_push_line_scroll_adjusts_when_capping_with_manual_scroll() {
 
     // Push one more line - scroll should decrement to compensate for removed line
     task.push_line("extra".to_string());
-    assert_eq!(task.scroll, 9, "scroll should decrement when oldest line is removed");
+    assert_eq!(
+        task.scroll, 9,
+        "scroll should decrement when oldest line is removed"
+    );
 }
 
 // ── copy_entries progress message contains item count ─────────
@@ -2049,7 +2132,11 @@ async fn copy_entries_complete_message_contains_count() {
     }
     assert_eq!(last_done, 3, "final progress should report 3 items done");
     let msg = complete_msg.expect("expected OperationComplete");
-    assert!(msg.contains('3'), "complete message should mention count: {}", msg);
+    assert!(
+        msg.contains('3'),
+        "complete message should mention count: {}",
+        msg
+    );
 
     fs::remove_dir_all(&src_dir).ok();
     fs::remove_dir_all(&dst_dir).ok();
@@ -2075,7 +2162,11 @@ async fn delete_entries_complete_message_contains_count() {
         }
     }
     let msg = complete_msg.expect("expected OperationComplete");
-    assert!(msg.contains('2'), "complete message should mention count: {}", msg);
+    assert!(
+        msg.contains('2'),
+        "complete message should mention count: {}",
+        msg
+    );
 
     fs::remove_dir_all(&dir).ok();
 }
@@ -2158,9 +2249,13 @@ fn is_archive_empty_and_dot_names() {
 fn resolve_editor_uses_editor_env() {
     use cpt::fs::open::resolve_editor;
     // Temporarily set $EDITOR to a known value
-    unsafe { std::env::set_var("EDITOR", "my_custom_editor"); }
+    unsafe {
+        std::env::set_var("EDITOR", "my_custom_editor");
+    }
     let result = resolve_editor();
-    unsafe { std::env::remove_var("EDITOR"); }
+    unsafe {
+        std::env::remove_var("EDITOR");
+    }
     assert_eq!(result, "my_custom_editor");
 }
 
@@ -2192,8 +2287,12 @@ fn resolve_editor_falls_back_to_system_default_when_both_empty() {
     let result = resolve_editor();
     // Restore
     unsafe {
-        if let Some(e) = old_editor { std::env::set_var("EDITOR", e); }
-        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+        if let Some(e) = old_editor {
+            std::env::set_var("EDITOR", e);
+        }
+        if let Some(v) = old_visual {
+            std::env::set_var("VISUAL", v);
+        }
     }
     // Should return nano, vi, or notepad - not empty
     assert!(!result.is_empty());
@@ -2204,9 +2303,13 @@ fn resolve_editor_falls_back_to_system_default_when_both_empty() {
 #[test]
 fn resolve_pager_uses_pager_env() {
     use cpt::fs::open::resolve_pager;
-    unsafe { std::env::set_var("PAGER", "my_pager"); }
+    unsafe {
+        std::env::set_var("PAGER", "my_pager");
+    }
     let result = resolve_pager();
-    unsafe { std::env::remove_var("PAGER"); }
+    unsafe {
+        std::env::remove_var("PAGER");
+    }
     assert_eq!(result, "my_pager");
 }
 
@@ -2214,10 +2317,14 @@ fn resolve_pager_uses_pager_env() {
 fn resolve_pager_falls_back_when_empty() {
     use cpt::fs::open::resolve_pager;
     let old = std::env::var("PAGER").ok();
-    unsafe { std::env::remove_var("PAGER"); }
+    unsafe {
+        std::env::remove_var("PAGER");
+    }
     let result = resolve_pager();
     unsafe {
-        if let Some(p) = old { std::env::set_var("PAGER", p); }
+        if let Some(p) = old {
+            std::env::set_var("PAGER", p);
+        }
     }
     #[cfg(windows)]
     assert_eq!(result, "more");
@@ -2241,16 +2348,19 @@ fn resolve_unpack_tar_always_uses_tar() {
     for name in &cases {
         let archive = PathBuf::from(format!("/src/{}", name));
         let dest = PathBuf::from("/dest");
-        let cmd = resolve_unpack_command(&archive, &dest).unwrap_or_else(|e| {
-            panic!("{} should resolve, got: {}", name, e)
-        });
+        let cmd = resolve_unpack_command(&archive, &dest)
+            .unwrap_or_else(|e| panic!("{} should resolve, got: {}", name, e));
         assert!(
             cmd.starts_with("tar -xf"),
             "{} should use tar, got: {}",
             name,
             cmd
         );
-        assert!(cmd.contains("/dest"), "command should reference dest: {}", cmd);
+        assert!(
+            cmd.contains("/dest"),
+            "command should reference dest: {}",
+            cmd
+        );
     }
 }
 
@@ -2265,7 +2375,11 @@ fn resolve_unpack_zip_on_current_os() {
     match result {
         Ok(cmd) => {
             #[cfg(windows)]
-            assert!(cmd.starts_with("tar"), "Windows ZIP should use tar: {}", cmd);
+            assert!(
+                cmd.starts_with("tar"),
+                "Windows ZIP should use tar: {}",
+                cmd
+            );
             #[cfg(not(windows))]
             assert!(
                 cmd.contains("unzip") || cmd.contains("7z") || cmd.contains("7za"),
@@ -2416,7 +2530,11 @@ fn explorer_enter_on_various_archive_extensions() {
         let mut found = false;
         for _ in 0..50 {
             explorer.handle_action(&Action::MoveDown);
-            if explorer.current_entry().map(|e| e.name == *name).unwrap_or(false) {
+            if explorer
+                .current_entry()
+                .map(|e| e.name == *name)
+                .unwrap_or(false)
+            {
                 found = true;
                 break;
             }
@@ -2441,7 +2559,10 @@ fn explorer_enter_on_various_archive_extensions() {
 fn theme_themes_dir_returns_some() {
     // themes_dir() uses confy to locate the config dir - should succeed on all platforms
     let dir = cpt::theme::Theme::themes_dir();
-    assert!(dir.is_some(), "themes_dir should return Some on a normal system");
+    assert!(
+        dir.is_some(),
+        "themes_dir should return Some on a normal system"
+    );
     let dir = dir.unwrap();
     // The last component should be "themes"
     assert_eq!(
@@ -2462,10 +2583,18 @@ fn theme_save_to_file_and_delete_file() {
     theme.set_field(0, ratatui::style::Color::Indexed(42));
 
     let save_result = theme.save_to_file(name);
-    assert!(save_result.is_ok(), "save_to_file failed: {:?}", save_result.err());
+    assert!(
+        save_result.is_ok(),
+        "save_to_file failed: {:?}",
+        save_result.err()
+    );
 
     let saved_path = save_result.unwrap();
-    assert!(saved_path.exists(), "saved theme file should exist at {}", saved_path.display());
+    assert!(
+        saved_path.exists(),
+        "saved theme file should exist at {}",
+        saved_path.display()
+    );
 
     // Verify content roundtrips
     let content = fs::read_to_string(&saved_path).unwrap();
@@ -2478,7 +2607,11 @@ fn theme_save_to_file_and_delete_file() {
 
     // Delete the file
     let delete_result = cpt::theme::Theme::delete_file(name);
-    assert!(delete_result.is_ok(), "delete_file failed: {:?}", delete_result.err());
+    assert!(
+        delete_result.is_ok(),
+        "delete_file failed: {:?}",
+        delete_result.err()
+    );
     assert!(!saved_path.exists(), "theme file should be deleted");
 }
 
@@ -2486,7 +2619,11 @@ fn theme_save_to_file_and_delete_file() {
 fn theme_delete_file_nonexistent_returns_ok() {
     // Deleting a theme that doesn't exist should return Ok (idempotent)
     let result = cpt::theme::Theme::delete_file("cpt-test-nonexistent-theme-xyz");
-    assert!(result.is_ok(), "delete_file on nonexistent should return Ok: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "delete_file on nonexistent should return Ok: {:?}",
+        result.err()
+    );
 }
 
 // ── open_in_editor / open_in_viewer ───────────────────────────
@@ -2497,7 +2634,9 @@ fn open_in_editor_with_true_command() {
     use cpt::fs::open::open_in_editor;
     // Set EDITOR to "true" - exits 0 immediately without doing anything
     let old = std::env::var("EDITOR").ok();
-    unsafe { std::env::set_var("EDITOR", "true"); }
+    unsafe {
+        std::env::set_var("EDITOR", "true");
+    }
     let dir = tempdir("open_editor_test");
     let file = dir.join("test.txt");
     fs::write(&file, "content").unwrap();
@@ -2508,7 +2647,11 @@ fn open_in_editor_with_true_command() {
             None => std::env::remove_var("EDITOR"),
         }
     }
-    assert!(result.is_ok(), "open_in_editor with EDITOR=true should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "open_in_editor with EDITOR=true should succeed: {:?}",
+        result.err()
+    );
     fs::remove_dir_all(&dir).ok();
 }
 
@@ -2517,7 +2660,9 @@ fn open_in_editor_with_true_command() {
 fn open_in_viewer_with_true_command() {
     use cpt::fs::open::open_in_viewer;
     let old = std::env::var("PAGER").ok();
-    unsafe { std::env::set_var("PAGER", "true"); }
+    unsafe {
+        std::env::set_var("PAGER", "true");
+    }
     let dir = tempdir("open_viewer_test");
     let file = dir.join("test.txt");
     fs::write(&file, "content").unwrap();
@@ -2528,7 +2673,11 @@ fn open_in_viewer_with_true_command() {
             None => std::env::remove_var("PAGER"),
         }
     }
-    assert!(result.is_ok(), "open_in_viewer with PAGER=true should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "open_in_viewer with PAGER=true should succeed: {:?}",
+        result.err()
+    );
     fs::remove_dir_all(&dir).ok();
 }
 
@@ -2551,9 +2700,14 @@ fn open_in_editor_missing_binary_returns_err() {
             Some(v) => std::env::set_var("EDITOR", v),
             None => std::env::remove_var("EDITOR"),
         }
-        if let Some(v) = old_visual { std::env::set_var("VISUAL", v); }
+        if let Some(v) = old_visual {
+            std::env::set_var("VISUAL", v);
+        }
     }
-    assert!(result.is_err(), "open_in_editor with nonexistent binary should return Err");
+    assert!(
+        result.is_err(),
+        "open_in_editor with nonexistent binary should return Err"
+    );
     fs::remove_dir_all(&dir).ok();
 }
 

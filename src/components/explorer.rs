@@ -50,10 +50,7 @@ impl Explorer {
                 let entry = &self.entries[i];
                 if let Some(ref filter) = self.filter_text {
                     if !filter.is_empty() {
-                        return entry
-                            .name
-                            .to_lowercase()
-                            .contains(&filter.to_lowercase());
+                        return entry.name.to_lowercase().contains(&filter.to_lowercase());
                     }
                 }
                 true
@@ -95,10 +92,7 @@ impl Explorer {
 
     #[allow(dead_code)]
     pub fn selected_entries(&self) -> Vec<&FileEntry> {
-        self.selected
-            .iter()
-            .map(|&i| &self.entries[i])
-            .collect()
+        self.selected.iter().map(|&i| &self.entries[i]).collect()
     }
 
     pub fn selected_paths(&self) -> Vec<PathBuf> {
@@ -160,8 +154,12 @@ impl Explorer {
                         self.refresh();
                     } else if crate::util::is_archive(&entry.name) {
                         return Some(Action::UnpackArchive);
+                    } else if crate::util::is_text_file(&entry.path) {
+                        return Some(Action::OpenEditor {
+                            path: entry.path.clone(),
+                        });
                     } else {
-                        return Some(Action::OpenEditor { path: entry.path.clone() });
+                        return Some(Action::OpenFile);
                     }
                 }
                 None

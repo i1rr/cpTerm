@@ -32,10 +32,7 @@ impl FileEntry {
             meta.file_attributes() & 0x2 != 0 // FILE_ATTRIBUTE_HIDDEN
         };
 
-        let modified = meta
-            .modified()
-            .ok()
-            .map(|t| DateTime::<Local>::from(t));
+        let modified = meta.modified().ok().map(|t| DateTime::<Local>::from(t));
 
         Some(Self {
             name,

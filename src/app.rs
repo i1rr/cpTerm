@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
@@ -32,15 +32,24 @@ pub enum InputMode {
     CreateTypeChoice,
     Command(String),
     TaskOutput,
+    ContextMenu(ContextMenuState),
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub items: Vec<ContextMenuItem>,
+    pub cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenuItem {
+    pub label: String,
+    pub action: Action,
 }
 
 enum PendingOp {
-    Copy {
-        pairs: Vec<(PathBuf, PathBuf)>,
-    },
-    Move {
-        pairs: Vec<(PathBuf, PathBuf)>,
-    },
+    Copy { pairs: Vec<(PathBuf, PathBuf)> },
+    Move { pairs: Vec<(PathBuf, PathBuf)> },
     Delete(Vec<PathBuf>),
     CloseEditor,
 }
@@ -141,7 +150,13 @@ impl App {
             .split(frame.area());
 
         self.dual_pane.draw(frame, chunks[0], &self.theme);
-        draw_status_bar(frame, chunks[1], &self.dual_pane, &self.input_mode, &self.theme);
+        draw_status_bar(
+            frame,
+            chunks[1],
+            &self.dual_pane,
+            &self.input_mode,
+            &self.theme,
+        );
         let active_editor = self.dual_pane.active_editor().is_some();
         let editor_fullscreen = self.dual_pane.editor_fullscreen;
         draw_command_bar(
@@ -166,6 +181,10 @@ impl App {
             && let Some(ref task) = self.task
         {
             draw_task_window(frame, frame.area(), task, &self.theme);
+        }
+
+        if let InputMode::ContextMenu(ref state) = self.input_mode {
+            self.draw_context_menu(frame, frame.area(), state);
         }
 
         if let Some(ref dialog) = self.dialog {
@@ -254,6 +273,21 @@ impl App {
                     _ => Action::Noop,
                 };
             }
+            InputMode::ContextMenu(state) => {
+                return match key.code {
+                    KeyCode::Up => Action::MoveUp,
+                    KeyCode::Down => Action::MoveDown,
+                    KeyCode::Enter => {
+                        if let Some(item) = state.items.get(state.cursor) {
+                            item.action.clone()
+                        } else {
+                            Action::Noop
+                        }
+                    }
+                    KeyCode::Esc => Action::DismissDialog,
+                    _ => Action::Noop,
+                };
+            }
             InputMode::Normal => {}
         }
 
@@ -298,6 +332,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('q')) => Action::Quit,
             (KeyModifiers::NONE, KeyCode::Esc) => Action::FilterCancel,
             (KeyModifiers::SHIFT, KeyCode::Enter) => Action::OpenFile,
+            (KeyModifiers::CONTROL, KeyCode::Enter) => Action::OpenContextMenu,
             (KeyModifiers::NONE, KeyCode::Char(c)) => Action::StartCommand(c),
             (KeyModifiers::SHIFT, KeyCode::Char(c)) => Action::StartCommand(c),
             _ => Action::Noop,
@@ -404,6 +439,34 @@ impl App {
 
         if self.theme_editor.is_some() && self.dispatch_theme_editor(&action) {
             return;
+        }
+
+        // Context menu navigation
+        if let InputMode::ContextMenu(ref mut state) = self.input_mode {
+            match action {
+                Action::MoveUp => {
+                    if state.cursor > 0 {
+                        state.cursor -= 1;
+                    }
+                    return;
+                }
+                Action::MoveDown => {
+                    if state.cursor + 1 < state.items.len() {
+                        state.cursor += 1;
+                    }
+                    return;
+                }
+                Action::DismissDialog => {
+                    self.input_mode = InputMode::Normal;
+                    return;
+                }
+                // Any selected action - close menu and dispatch
+                other => {
+                    self.input_mode = InputMode::Normal;
+                    // fall through to normal dispatch
+                    return self.dispatch(other);
+                }
+            }
         }
 
         match action {
@@ -549,17 +612,80 @@ impl App {
                     .dual_pane
                     .active_explorer()
                     .and_then(|e| e.current_entry())
+                    && !entry.is_dir
+                    && let Err(msg) = crate::fs::open::open_file(&entry.path)
                 {
-                    if !entry.is_dir {
-                        if let Err(msg) = crate::fs::open::open_file(&entry.path) {
-                            self.dialog = Some(Dialog::error(msg));
-                        }
-                    }
+                    self.dialog = Some(Dialog::error(msg));
                 }
             }
             Action::OpenEditor { path } => {
                 if let Err(msg) = self.dual_pane.open_editor_in_active(path) {
                     self.dialog = Some(Dialog::error(msg));
+                }
+            }
+            Action::OpenAsText => {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                    && !entry.is_dir
+                {
+                    let path = entry.path.clone();
+                    if let Err(msg) = self.dual_pane.open_editor_in_active(path) {
+                        self.dialog = Some(Dialog::error(msg));
+                    }
+                }
+            }
+            Action::OpenWithDefault => {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                    && !entry.is_dir
+                    && let Err(msg) = crate::fs::open::open_file(&entry.path)
+                {
+                    self.dialog = Some(Dialog::error(msg));
+                }
+            }
+            Action::OpenContextMenu => {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_explorer()
+                    .and_then(|e| e.current_entry())
+                {
+                    let is_dir = entry.is_dir;
+                    let is_archive = !is_dir && crate::util::is_archive(&entry.name);
+                    let mut items = Vec::new();
+
+                    if !is_dir {
+                        items.push(ContextMenuItem {
+                            label: "Open with OS default".to_string(),
+                            action: Action::OpenWithDefault,
+                        });
+                    }
+                    if !is_dir {
+                        items.push(ContextMenuItem {
+                            label: "Open as text in editor".to_string(),
+                            action: Action::OpenAsText,
+                        });
+                    }
+                    if !is_dir {
+                        items.push(ContextMenuItem {
+                            label: "View in pager (F3)".to_string(),
+                            action: Action::ViewFile,
+                        });
+                    }
+                    if is_archive {
+                        items.push(ContextMenuItem {
+                            label: "Unpack archive".to_string(),
+                            action: Action::UnpackArchive,
+                        });
+                    }
+
+                    if !items.is_empty() {
+                        self.input_mode =
+                            InputMode::ContextMenu(ContextMenuState { items, cursor: 0 });
+                    }
                 }
             }
             Action::CloseEditor => {
@@ -804,7 +930,10 @@ impl App {
                      Up/Down - navigate\n\
                      Home/End - top/bottom\n\
                      PgUp/PgDn - page scroll\n\
-                     Enter - open dir/file\n\
+                     Enter - open dir / edit text file / unpack archive\n\
+                     Shift+Enter - open with OS default app\n\
+                     Ctrl+Enter - context menu (open as...)\n\
+                     F3 - view in pager\n\
                      Backspace - parent dir\n\
                      Tab - switch pane\n\
                      Space/Insert - toggle select\n\
@@ -909,10 +1038,8 @@ impl App {
                             self.bookmark_panel = None;
                         }
                     } else {
-                        self.dialog = Some(Dialog::error(format!(
-                            "Path not found: {}",
-                            path.display()
-                        )));
+                        self.dialog =
+                            Some(Dialog::error(format!("Path not found: {}", path.display())));
                     }
                 }
                 true
@@ -1028,16 +1155,35 @@ impl App {
             Action::InputChar(c) => {
                 // Only allow valid filename chars
                 if c.is_alphanumeric() || *c == '-' || *c == '_' {
-                    self.theme_editor.as_mut().unwrap().naming.as_mut().unwrap().push(*c);
+                    self.theme_editor
+                        .as_mut()
+                        .unwrap()
+                        .naming
+                        .as_mut()
+                        .unwrap()
+                        .push(*c);
                 }
                 true
             }
             Action::InputBackspace => {
-                self.theme_editor.as_mut().unwrap().naming.as_mut().unwrap().pop();
+                self.theme_editor
+                    .as_mut()
+                    .unwrap()
+                    .naming
+                    .as_mut()
+                    .unwrap()
+                    .pop();
                 true
             }
             Action::InputConfirm => {
-                let name = self.theme_editor.as_ref().unwrap().naming.as_ref().unwrap().clone();
+                let name = self
+                    .theme_editor
+                    .as_ref()
+                    .unwrap()
+                    .naming
+                    .as_ref()
+                    .unwrap()
+                    .clone();
                 self.theme_editor.as_mut().unwrap().naming = None;
                 if !name.is_empty() {
                     self.theme_name = name.clone();
@@ -1157,7 +1303,10 @@ impl App {
             Action::ThemeEditorOpenPicker => {
                 let field_idx = self.theme_editor.as_ref().unwrap().cursor;
                 let current_color = self.theme.get_field(field_idx);
-                self.theme_editor.as_mut().unwrap().open_picker(current_color);
+                self.theme_editor
+                    .as_mut()
+                    .unwrap()
+                    .open_picker(current_color);
                 true
             }
             Action::ThemeEditorCycleBase => {
@@ -1341,13 +1490,10 @@ impl App {
         }
 
         // Parse "cd <path>" commands
-        if let Some(path_str) = cmd.strip_prefix("cd ").or_else(|| {
-            if cmd == "cd" {
-                Some("~")
-            } else {
-                None
-            }
-        }) {
+        if let Some(path_str) = cmd
+            .strip_prefix("cd ")
+            .or_else(|| if cmd == "cd" { Some("~") } else { None })
+        {
             let path_str = path_str.trim();
             let path_str = if path_str == "~" {
                 std::env::var("USERPROFILE")
@@ -1375,8 +1521,10 @@ impl App {
                     }
                 }
                 Ok(_) => {
-                    self.dialog =
-                        Some(Dialog::error(format!("Not a directory: {}", target.display())));
+                    self.dialog = Some(Dialog::error(format!(
+                        "Not a directory: {}",
+                        target.display()
+                    )));
                 }
                 Err(e) => {
                     self.dialog = Some(Dialog::error(format!("cd: {}", e)));
@@ -1398,6 +1546,53 @@ impl App {
         self.input_mode = InputMode::TaskOutput;
         let tx = self.action_tx.clone();
         tokio::spawn(task::run_task(cmd.to_string(), cwd, tx));
+    }
+
+    fn draw_context_menu(&self, frame: &mut Frame, area: Rect, state: &ContextMenuState) {
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::Line;
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        let item_count = state.items.len() as u16;
+        let max_label = state
+            .items
+            .iter()
+            .map(|i| i.label.len())
+            .max()
+            .unwrap_or(10);
+        let width = (max_label as u16 + 4).min(area.width.saturating_sub(4));
+        let height = (item_count + 2).min(area.height.saturating_sub(2)); // +2 for borders
+
+        // Center the popup
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup = Rect::new(x, y, width, height);
+
+        frame.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.border_focused))
+            .title(Line::from(" Actions "));
+
+        let lines: Vec<Line> = state
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let style = if i == state.cursor {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                Line::styled(format!(" {} ", item.label), style)
+            })
+            .collect();
+
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .style(Style::default().fg(self.theme.info_fg));
+        frame.render_widget(paragraph, popup);
     }
 
     fn save_session(&self) {
@@ -1514,14 +1709,8 @@ mod tests {
     fn create_type_choice_other_keys_noop() {
         let mut app = make_app();
         app.input_mode = InputMode::CreateTypeChoice;
-        assert!(matches!(
-            app.map_key(key(KeyCode::Enter)),
-            Action::Noop
-        ));
-        assert!(matches!(
-            app.map_key(key(KeyCode::Char('x'))),
-            Action::Noop
-        ));
+        assert!(matches!(app.map_key(key(KeyCode::Enter)), Action::Noop));
+        assert!(matches!(app.map_key(key(KeyCode::Char('x'))), Action::Noop));
     }
 
     // ── Dispatch: CreateNew sets CreateTypeChoice mode ────────
@@ -1568,18 +1757,14 @@ mod tests {
     fn bookmark_panel_intercepts_up_down() {
         let mut app = make_app();
         // Add a couple of bookmarks so we can navigate.
-        app.bookmarks
-            .entries
-            .push(crate::bookmarks::BookmarkEntry {
-                name: "a".to_string(),
-                path: std::path::PathBuf::from("."),
-            });
-        app.bookmarks
-            .entries
-            .push(crate::bookmarks::BookmarkEntry {
-                name: "b".to_string(),
-                path: std::path::PathBuf::from("."),
-            });
+        app.bookmarks.entries.push(crate::bookmarks::BookmarkEntry {
+            name: "a".to_string(),
+            path: std::path::PathBuf::from("."),
+        });
+        app.bookmarks.entries.push(crate::bookmarks::BookmarkEntry {
+            name: "b".to_string(),
+            path: std::path::PathBuf::from("."),
+        });
         app.dispatch(Action::OpenBookmarks);
         let panel = app.bookmark_panel.as_ref().unwrap();
         assert_eq!(panel.cursor, 0);
@@ -1629,12 +1814,10 @@ mod tests {
     #[test]
     fn bookmark_remove_deletes_entry() {
         let mut app = make_app();
-        app.bookmarks
-            .entries
-            .push(crate::bookmarks::BookmarkEntry {
-                name: "tmp".to_string(),
-                path: std::path::PathBuf::from("."),
-            });
+        app.bookmarks.entries.push(crate::bookmarks::BookmarkEntry {
+            name: "tmp".to_string(),
+            path: std::path::PathBuf::from("."),
+        });
         app.dispatch(Action::OpenBookmarks);
         let initial_count = app.bookmarks.entries.len();
         app.dispatch(Action::BookmarkRemove);

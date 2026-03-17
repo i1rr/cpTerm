@@ -8,18 +8,9 @@ use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub enum DialogKind {
-    Confirm {
-        title: String,
-        message: String,
-    },
-    CloseEditorConfirm {
-        title: String,
-        message: String,
-    },
-    Conflict {
-        title: String,
-        message: String,
-    },
+    Confirm { title: String, message: String },
+    CloseEditorConfirm { title: String, message: String },
+    Conflict { title: String, message: String },
     Error(String),
     Info(String),
 }
@@ -98,7 +89,10 @@ impl Dialog {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.confirm_border))
                     .title(Line::from(format!(" {} ", title)));
-                let text = format!("{}\n\nEnter: Save and close  D: Discard  Esc: Cancel", message);
+                let text = format!(
+                    "{}\n\nEnter: Save and close  D: Discard  Esc: Cancel",
+                    message
+                );
                 (text, block)
             }
             DialogKind::Conflict { title, message } => {
