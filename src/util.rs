@@ -95,9 +95,11 @@ pub fn is_archive(name: &str) -> bool {
         || lower.ends_with(".tar.xz")
 }
 
-/// Find the 7-Zip binary on PATH.
-/// Tries `7z`, `7za`, and `7zz` in order - returns the first that is found.
+/// Find the 7-Zip binary on PATH or in well-known install locations.
+/// Tries `7z`, `7za`, and `7zz` on PATH first, then checks common Windows
+/// install directories (7-Zip, PeaZip, NanaZip, etc.).
 pub fn find_sevenzip() -> Option<String> {
+    // 1. Try PATH first
     for candidate in &["7z", "7za", "7zz"] {
         if std::process::Command::new(candidate)
             .arg("i")
@@ -109,5 +111,42 @@ pub fn find_sevenzip() -> Option<String> {
             return Some((*candidate).to_string());
         }
     }
+
+    // 2. On Windows, check well-known install directories
+    #[cfg(windows)]
+    {
+        let program_files: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+            .iter()
+            .filter_map(|var| std::env::var(var).ok())
+            .collect();
+
+        // Paths relative to Program Files where 7z.exe might live
+        let relative_paths: &[&str] = &[
+            r"7-Zip\7z.exe",
+            r"PeaZip\res\bin\7z\7z.exe",
+            r"PeaZip\res\7z\7z.exe",
+            r"NanaZip\7z.exe",
+        ];
+
+        for pf in &program_files {
+            for rel in relative_paths {
+                let full = PathBuf::from(pf).join(rel);
+                if full.exists() {
+                    return Some(full.to_string_lossy().into_owned());
+                }
+            }
+        }
+
+        // Also check LocalAppData for user-level installs
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            for rel in &[r"PeaZip\res\bin\7z\7z.exe", r"PeaZip\res\7z\7z.exe"] {
+                let full = PathBuf::from(&local).join(rel);
+                if full.exists() {
+                    return Some(full.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
     None
 }

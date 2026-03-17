@@ -20,6 +20,14 @@ pub fn shell_quote(path: &Path) -> String {
     }
 }
 
+/// Quote a path for use with tar on Windows. Uses forward slashes to avoid
+/// issues where tar (libarchive) doubles backslashes or misinterprets them.
+#[cfg(windows)]
+fn tar_quote(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    format!("\"{}\"", s.replace('"', "\"\""))
+}
+
 // ── Tool probing ──────────────────────────────────────────────────────────────
 
 /// Return true if `tool` can be found and spawned on the current PATH.
@@ -61,7 +69,7 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<String, Str
 
     // ── TAR variants - tar is present everywhere ──────────────────────────────
     // On Windows, paths like C:\... make tar think `C` is a remote host.
-    // --force-local tells tar to treat the colon as part of a local path.
+    // We use forward-slash paths to avoid backslash doubling issues.
     if name.ends_with(".tar")
         || name.ends_with(".tar.gz")
         || name.ends_with(".tgz")
@@ -70,7 +78,11 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<String, Str
         || name.ends_with(".tar.xz")
     {
         #[cfg(windows)]
-        return Ok(format!("tar --force-local -xf {} -C {}", aq, dq));
+        return Ok(format!(
+            "tar --force-local -xf {} -C {}",
+            tar_quote(archive),
+            tar_quote(dest)
+        ));
         #[cfg(not(windows))]
         return Ok(format!("tar -xf {} -C {}", aq, dq));
     }
@@ -80,8 +92,11 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<String, Str
         #[cfg(windows)]
         {
             // tar on Windows 10+ understands ZIP natively.
-            // --force-local prevents tar from treating C: as a remote host.
-            return Ok(format!("tar --force-local -xf {} -C {}", aq, dq));
+            return Ok(format!(
+                "tar --force-local -xf {} -C {}",
+                tar_quote(archive),
+                tar_quote(dest)
+            ));
         }
         #[cfg(not(windows))]
         {

@@ -441,9 +441,12 @@ impl App {
             return;
         }
 
-        // Context menu navigation
+        // Context menu navigation - must absorb Tick/Noop/Resize to stay open
         if let InputMode::ContextMenu(ref mut state) = self.input_mode {
             match action {
+                Action::Tick | Action::Noop | Action::Resize(_, _) => {
+                    return;
+                }
                 Action::MoveUp => {
                     if state.cursor > 0 {
                         state.cursor -= 1;
@@ -463,7 +466,6 @@ impl App {
                 // Any selected action - close menu and dispatch
                 other => {
                     self.input_mode = InputMode::Normal;
-                    // fall through to normal dispatch
                     return self.dispatch(other);
                 }
             }
