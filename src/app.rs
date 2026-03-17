@@ -412,6 +412,7 @@ impl App {
         // Task stream actions are processed regardless of any modal state so that
         // background output keeps flowing while theme editor or dialogs are open.
         if let Action::TaskLine(ref line) = action {
+            log::debug!("task output: {}", line);
             if let Some(ref mut task) = self.task {
                 task.push_line(line.clone());
             }
@@ -427,6 +428,7 @@ impl App {
             return;
         }
         if let Action::TaskError(ref msg) = action {
+            log::debug!("task error: {}", msg);
             if let Some(ref mut task) = self.task {
                 task.push_line(format!("error: {}", msg));
                 task.finish(-1);
@@ -765,7 +767,12 @@ impl App {
                     .and_then(|e| e.current_entry())
                 {
                     if !entry.is_dir {
-                        let dest = self.dual_pane.inactive_dir();
+                        // Extract to same directory as the archive file
+                        let dest = entry
+                            .path
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| self.dual_pane.active_dir());
                         let cwd = self.dual_pane.active_dir();
                         log::debug!(
                             "unpack: archive={}, dest={}, cwd={}, active_pane={:?}",

@@ -174,7 +174,7 @@ coverage but are not used by the main binary at runtime.
 - `resolve_unpack_command(archive, dest)` in `src/fs/archive.rs` selects the best available
   tool for each format and OS (see tool matrix above)
 - Extraction runs as an async background task with live output in the task window
-- Destination: the inactive pane's current directory
+- Destination: same directory as the archive file
 - Supported formats: .zip, .tar, .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.xz, .7z, .rar,
   .gz, .bz2, .xz
 
