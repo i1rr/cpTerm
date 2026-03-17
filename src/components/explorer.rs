@@ -153,12 +153,15 @@ impl Explorer {
                         self.cursor = 0;
                         self.refresh();
                     } else if crate::util::is_archive(&entry.name) {
+                        log::debug!("enter: archive detected: {}", entry.path.display());
                         return Some(Action::UnpackArchive);
                     } else if crate::util::is_text_file(&entry.path) {
+                        log::debug!("enter: text file, opening editor: {}", entry.path.display());
                         return Some(Action::OpenEditor {
                             path: entry.path.clone(),
                         });
                     } else {
+                        log::debug!("enter: binary/unknown file, opening with OS: {}", entry.path.display());
                         return Some(Action::OpenFile);
                     }
                 }

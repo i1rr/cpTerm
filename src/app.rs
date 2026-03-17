@@ -418,9 +418,12 @@ impl App {
             return;
         }
         if let Action::TaskComplete(code) = action {
+            log::debug!("task complete: exit code {}", code);
             if let Some(ref mut task) = self.task {
                 task.finish(code);
             }
+            // Refresh both panes so newly extracted files appear
+            self.dual_pane.refresh_both();
             return;
         }
         if let Action::TaskError(ref msg) = action {
@@ -764,22 +767,33 @@ impl App {
                     if !entry.is_dir {
                         let dest = self.dual_pane.inactive_dir();
                         let cwd = self.dual_pane.active_dir();
+                        log::debug!(
+                            "unpack: archive={}, dest={}, cwd={}, active_pane={:?}",
+                            entry.path.display(),
+                            dest.display(),
+                            cwd.display(),
+                            self.dual_pane.active
+                        );
                         match crate::fs::archive::resolve_unpack_command(&entry.path, &dest) {
                             Ok(unpack_cmd) => {
+                                log::debug!("unpack: resolved command: {:?}", unpack_cmd);
                                 let tx = self.action_tx.clone();
                                 let label = unpack_cmd.display();
                                 self.task = Some(TaskState::new(&label));
                                 self.input_mode = InputMode::TaskOutput;
                                 match unpack_cmd {
                                     crate::fs::archive::UnpackCommand::Shell(cmd) => {
+                                        log::debug!("unpack: spawning shell task in cwd={}", cwd.display());
                                         tokio::spawn(task::run_task(cmd, cwd, tx));
                                     }
                                     crate::fs::archive::UnpackCommand::Direct { program, args } => {
+                                        log::debug!("unpack: spawning direct task: {} {:?} in cwd={}", program, args, cwd.display());
                                         tokio::spawn(task::run_task_direct(program, args, cwd, tx));
                                     }
                                 }
                             }
                             Err(msg) => {
+                                log::debug!("unpack: resolve error: {}", msg);
                                 self.dialog = Some(Dialog::error(msg));
                             }
                         }

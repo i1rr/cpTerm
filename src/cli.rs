@@ -10,4 +10,8 @@ pub struct Cli {
 
     /// Directory for the right pane
     pub right: Option<PathBuf>,
+
+    /// Enable debug logging to file (writes to cpt.log)
+    #[arg(long)]
+    pub debug: bool,
 }

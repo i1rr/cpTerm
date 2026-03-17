@@ -1,12 +1,14 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use log::{Level, Log, Metadata, Record};
 
 const MAX_LOG_LINES: usize = 500;
 
+static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 static BUFFER: Mutex<Vec<LogEntry>> = Mutex::new(Vec::new());
 
 struct LogEntry {
@@ -18,15 +20,28 @@ struct MemoryLogger;
 
 impl Log for MemoryLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Warn
+        if DEBUG_MODE.load(Ordering::Relaxed) {
+            metadata.level() <= Level::Debug
+        } else {
+            metadata.level() <= Level::Warn
+        }
     }
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
+            let message = format!("[{}] {}", record.target(), record.args());
+
+            // In debug mode, also write to the log file immediately
+            if DEBUG_MODE.load(Ordering::Relaxed)
+                && let Some(path) = log_path()
+            {
+                let _ = append_line_to_file(&path, record.level(), &message);
+            }
+
             if let Ok(mut buf) = BUFFER.lock() {
                 buf.push(LogEntry {
                     level: record.level(),
-                    message: format!("[{}] {}", record.target(), record.args()),
+                    message,
                 });
             }
         }
@@ -42,6 +57,17 @@ pub fn init() {
     log::set_max_level(log::LevelFilter::Warn);
 }
 
+/// Enable debug-level logging. Call after init() when --debug is passed.
+pub fn enable_debug() {
+    DEBUG_MODE.store(true, Ordering::Relaxed);
+    log::set_max_level(log::LevelFilter::Debug);
+
+    // Write a separator to the log file
+    if let Some(path) = log_path() {
+        let _ = append_line_to_file(&path, Level::Info, "--- debug session started ---");
+    }
+}
+
 fn log_path() -> Option<PathBuf> {
     let dir = std::env::var("APPDATA")
         .or_else(|_| std::env::var("XDG_CONFIG_HOME"))
@@ -49,6 +75,20 @@ fn log_path() -> Option<PathBuf> {
         .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")))
         .ok()?;
     Some(dir.join("cpt").join("cpt.log"))
+}
+
+/// Append a single timestamped line to the log file.
+fn append_line_to_file(path: &PathBuf, level: Level, message: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{} {}: {}", now, level, message)?;
+    Ok(())
 }
 
 /// Drain collected entries, print to stderr, and append to log file.
@@ -62,6 +102,11 @@ pub fn dump() -> usize {
     };
 
     if entries.is_empty() {
+        if DEBUG_MODE.load(Ordering::Relaxed)
+            && let Some(path) = log_path()
+        {
+            eprintln!("debug log: {}", path.display());
+        }
         return 0;
     }
 
@@ -75,9 +120,17 @@ pub fn dump() -> usize {
         eprintln!("{}: {}", entry.level, entry.message);
     }
 
-    // Append to log file
-    if let Some(path) = log_path() {
+    // In non-debug mode, append to log file at the end (debug mode already writes in real-time)
+    if !DEBUG_MODE.load(Ordering::Relaxed)
+        && let Some(path) = log_path()
+    {
         let _ = write_to_file(&path, &entries);
+    }
+
+    if DEBUG_MODE.load(Ordering::Relaxed)
+        && let Some(path) = log_path()
+    {
+        eprintln!("debug log: {}", path.display());
     }
 
     entries.len()

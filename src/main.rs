@@ -26,6 +26,9 @@ async fn main() -> Result<()> {
     logger::init();
 
     let args = Cli::parse();
+    if args.debug {
+        logger::enable_debug();
+    }
     let session = SessionConfig::load();
 
     let left_dir = args
