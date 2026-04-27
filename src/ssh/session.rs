@@ -91,16 +91,13 @@ impl SshSession {
         }
 
         // Fall back to password auth
-        if !authenticated
-            && let Some(pw) = password {
+        if !authenticated && let Some(pw) = password {
             let auth_result = handle
                 .authenticate_password(user, pw)
                 .await
                 .map_err(|e| format!("Password auth failed: {}", e))?;
             if !auth_result.success() {
-                return Err(
-                    "Authentication failed: wrong password or key rejected".to_string(),
-                );
+                return Err("Authentication failed: wrong password or key rejected".to_string());
             }
             authenticated = true;
         }
@@ -272,8 +269,7 @@ impl SshSession {
     ) -> Result<(), String> {
         use tokio::io::AsyncWriteExt;
 
-        let data =
-            std::fs::read(local_path).map_err(|e| format!("Local read failed: {}", e))?;
+        let data = std::fs::read(local_path).map_err(|e| format!("Local read failed: {}", e))?;
 
         let mut remote_file = self
             .sftp

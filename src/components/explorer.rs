@@ -52,7 +52,8 @@ impl Explorer {
             .filter(|&i| {
                 let entry = &self.entries[i];
                 if let Some(ref filter) = self.filter_text
-                    && !filter.is_empty() {
+                    && !filter.is_empty()
+                {
                     return entry.name.to_lowercase().contains(&filter.to_lowercase());
                 }
                 true
@@ -180,7 +181,10 @@ impl Explorer {
                             path: entry.path.clone(),
                         });
                     } else {
-                        log::debug!("enter: binary/unknown file, opening with OS: {}", entry.path.display());
+                        log::debug!(
+                            "enter: binary/unknown file, opening with OS: {}",
+                            entry.path.display()
+                        );
                         return Some(Action::OpenFile);
                     }
                 }
@@ -337,11 +341,7 @@ impl Explorer {
                 format_size(entry.size)
             };
 
-            let date = entry
-                .modified
-                .as_ref()
-                .map(format_date)
-                .unwrap_or_default();
+            let date = entry.modified.as_ref().map(format_date).unwrap_or_default();
 
             let is_new = self.new_files.contains(&entry.path);
 

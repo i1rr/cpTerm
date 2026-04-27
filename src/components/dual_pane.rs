@@ -154,11 +154,13 @@ impl DualPane {
         for path in paths {
             let parent = path.parent().map(|p| p.to_path_buf());
             if let PaneContent::Explorer(e) = &mut self.left
-                && parent.as_ref() == Some(&e.current_dir) {
+                && parent.as_ref() == Some(&e.current_dir)
+            {
                 e.new_files.insert(path.clone());
             }
             if let PaneContent::Explorer(e) = &mut self.right
-                && parent.as_ref() == Some(&e.current_dir) {
+                && parent.as_ref() == Some(&e.current_dir)
+            {
                 e.new_files.insert(path.clone());
             }
             // Remote panes don't track new-file highlighting
@@ -170,7 +172,8 @@ impl DualPane {
         let mut paths = HashSet::new();
         for pane in [&self.left, &self.right] {
             if let PaneContent::Explorer(e) = pane
-                && e.current_dir == dir {
+                && e.current_dir == dir
+            {
                 for entry in &e.entries {
                     paths.insert(entry.path.clone());
                 }
@@ -240,13 +243,11 @@ impl DualPane {
                 self.refresh_both();
                 None
             }
-            _ => {
-                match self.active_content_mut() {
-                    PaneContent::Explorer(explorer) => explorer.handle_action(action),
-                    PaneContent::Remote(remote) => remote.handle_action(action),
-                    PaneContent::Editor(_) => None,
-                }
-            }
+            _ => match self.active_content_mut() {
+                PaneContent::Explorer(explorer) => explorer.handle_action(action),
+                PaneContent::Remote(remote) => remote.handle_action(action),
+                PaneContent::Editor(_) => None,
+            },
         }
     }
 

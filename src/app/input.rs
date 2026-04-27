@@ -246,11 +246,7 @@ impl App {
         }
     }
 
-    pub(super) fn map_bookmark_panel_key(
-        &self,
-        key: KeyEvent,
-        panel: &BookmarkPanel,
-    ) -> Action {
+    pub(super) fn map_bookmark_panel_key(&self, key: KeyEvent, panel: &BookmarkPanel) -> Action {
         // Naming sub-state: text input for bookmark name.
         if panel.naming.is_some() {
             return match key.code {

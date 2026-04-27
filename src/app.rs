@@ -17,16 +17,16 @@ use crate::theme::Theme;
 use crate::tui;
 
 mod types;
-pub use types::*;
 use types::PendingOp;
+pub use types::*;
 
-mod draw;
-mod input;
+mod dispatch;
 mod dispatch_bm;
-mod dispatch_theme;
 mod dispatch_fs;
 mod dispatch_ssh;
-mod dispatch;
+mod dispatch_theme;
+mod draw;
+mod input;
 
 pub struct BackgroundedSession {
     pub session: Arc<tokio::sync::Mutex<crate::ssh::session::SshSession>>,
@@ -80,8 +80,7 @@ impl App {
         let theme = Theme::by_name(&theme_name);
         let bookmarks = BookmarkList::load();
         let startup_dialog = if bookmarks.load_failed() {
-            let path = BookmarkList::file_path()
-                .unwrap_or_else(|| "unknown location".to_string());
+            let path = BookmarkList::file_path().unwrap_or_else(|| "unknown location".to_string());
             Some(Dialog::error(format!(
                 "Could not read bookmarks file:\n  {}\n\nBookmarks will not be saved this session.\nFix or delete the file to restore normal operation.",
                 path
@@ -134,9 +133,10 @@ impl App {
 
             if let Some(path) = self.pending_view_file.take() {
                 if let Err(e) = tui::suspend() {
-                    self.dialog = Some(crate::components::dialog::Dialog::error(
-                        format!("Failed to suspend TUI: {}", e),
-                    ));
+                    self.dialog = Some(crate::components::dialog::Dialog::error(format!(
+                        "Failed to suspend TUI: {}",
+                        e
+                    )));
                 } else {
                     let view_result = crate::fs::open::open_in_viewer(&path);
                     if let Err(e) = tui::resume() {
@@ -194,7 +194,27 @@ mod tests {
 
     fn make_app() -> App {
         let dir = std::env::current_dir().unwrap();
-        App::new(dir.clone(), dir, PaneSide::Left, "default".to_string())
+        let (action_tx, action_rx) = mpsc::unbounded_channel();
+        App {
+            dual_pane: DualPane::new(dir.clone(), dir, PaneSide::Left),
+            input_mode: InputMode::Normal,
+            dialog: None,
+            should_quit: false,
+            theme: Theme::by_name("default"),
+            theme_name: "default".to_string(),
+            theme_editor: None,
+            bookmark_panel: None,
+            bookmarks: BookmarkList::default(),
+            task: None,
+            action_tx,
+            action_rx,
+            pending_op: None,
+            pending_new_files: Vec::new(),
+            pre_extract_snapshot: None,
+            connecting_to: None,
+            ssh_sessions: HashMap::new(),
+            pending_view_file: None,
+        }
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -497,10 +517,7 @@ mod tests {
         app.input_mode = InputMode::UnpackChoice {
             archive: PathBuf::from("/test/archive.zip"),
         };
-        assert!(matches!(
-            app.map_key(key(KeyCode::Char('x'))),
-            Action::Noop
-        ));
+        assert!(matches!(app.map_key(key(KeyCode::Char('x'))), Action::Noop));
     }
 
     #[test]

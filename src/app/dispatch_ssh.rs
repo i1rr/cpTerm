@@ -28,7 +28,11 @@ pub fn parse_ssh_command(cmd: &str) -> Option<(String, String, String)> {
     let (host_user_part, path) = if let Some(colon_pos) = rest.find(':') {
         let (left, right) = rest.split_at(colon_pos);
         let path = right[1..].to_string(); // skip the ':'
-        let path = if path.is_empty() { "/".to_string() } else { path };
+        let path = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        };
         (left.trim(), path)
     } else {
         (rest, "/".to_string())
@@ -47,7 +51,12 @@ pub fn parse_ssh_command(cmd: &str) -> Option<(String, String, String)> {
         return None;
     }
 
-    log::debug!("parse_ssh_command: user={:?} host={:?} path={:?}", user, host, path);
+    log::debug!(
+        "parse_ssh_command: user={:?} host={:?} path={:?}",
+        user,
+        host,
+        path
+    );
     Some((user, host, path))
 }
 
@@ -193,7 +202,8 @@ impl App {
                     let mut state = SshConnectState::new();
                     let last_ssh = SessionConfig::load().last_ssh;
                     if let Some(ref last) = last_ssh
-                        && !last.host.is_empty() {
+                        && !last.host.is_empty()
+                    {
                         state.fields[0] = last.host.clone();
                         state.fields[1] = last.port.to_string();
                         state.fields[2] = last.user.clone();
@@ -201,7 +211,8 @@ impl App {
                     }
                     // Check if a backgrounded session exists for this host
                     if let Some(ref last) = last_ssh
-                        && !last.host.is_empty() {
+                        && !last.host.is_empty()
+                    {
                         let key = format!("{}@{}", last.user, last.host);
                         if let Some(entry) = self.ssh_sessions.get(&key) {
                             let session = entry.session.clone();
@@ -228,7 +239,8 @@ impl App {
                                         });
                                     }
                                     Err(_) => {
-                                        let _ = tx.send(Action::SshSessionExpired { key: key_clone });
+                                        let _ =
+                                            tx.send(Action::SshSessionExpired { key: key_clone });
                                     }
                                 }
                             });
@@ -265,7 +277,11 @@ impl App {
                         session: remote.session.clone(),
                         last_path: remote.current_path.clone(),
                         host_label: remote.host_label.clone(),
-                        port: SessionConfig::load().last_ssh.as_ref().map(|s| s.port).unwrap_or(22),
+                        port: SessionConfig::load()
+                            .last_ssh
+                            .as_ref()
+                            .map(|s| s.port)
+                            .unwrap_or(22),
                         user: key.split('@').next().unwrap_or("").to_string(),
                         host: key.split('@').nth(1).unwrap_or("").to_string(),
                     };
@@ -312,7 +328,14 @@ impl App {
                     let password = state.password().map(|s| s.to_string());
                     let tx = self.action_tx.clone();
                     tokio::spawn(async move {
-                        match crate::ssh::SshSession::connect(&host, port, &user, password.as_deref()).await {
+                        match crate::ssh::SshSession::connect(
+                            &host,
+                            port,
+                            &user,
+                            password.as_deref(),
+                        )
+                        .await
+                        {
                             Ok(session) => {
                                 let session_arc = Arc::new(tokio::sync::Mutex::new(session));
                                 match session_arc.lock().await.list_dir(&path).await {
@@ -327,7 +350,10 @@ impl App {
                                         });
                                     }
                                     Err(e) => {
-                                        let _ = tx.send(Action::SshConnectionFailed(format!("Connected but failed to list {}: {}", path, e)));
+                                        let _ = tx.send(Action::SshConnectionFailed(format!(
+                                            "Connected but failed to list {}: {}",
+                                            path, e
+                                        )));
                                     }
                                 }
                             }
@@ -339,7 +365,14 @@ impl App {
                 }
                 true
             }
-            Action::SshConnected { session, host, port, user, initial_path, entries } => {
+            Action::SshConnected {
+                session,
+                host,
+                port,
+                user,
+                initial_path,
+                entries,
+            } => {
                 self.input_mode = InputMode::Normal;
                 self.connecting_to = None;
                 log::debug!("ssh: connected to {}@{}", user, host);
@@ -372,8 +405,17 @@ impl App {
                 self.dialog = Some(Dialog::error(format!("SSH connection failed: {}", msg)));
                 true
             }
-            Action::SshPasswordRequired { host, port, user, path } => {
-                log::debug!("ssh: key auth failed for {}@{}, prompting for password", user, host);
+            Action::SshPasswordRequired {
+                host,
+                port,
+                user,
+                path,
+            } => {
+                log::debug!(
+                    "ssh: key auth failed for {}@{}, prompting for password",
+                    user,
+                    host
+                );
                 self.connecting_to = None;
                 let mut state = SshConnectState::new();
                 state.fields[0] = host;
@@ -393,7 +435,10 @@ impl App {
                         let sess = session.lock().await;
                         match sess.list_dir(&path_clone).await {
                             Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing { path: path_clone, entries });
+                                let _ = tx.send(Action::RemoteListing {
+                                    path: path_clone,
+                                    entries,
+                                });
                             }
                             Err(e) => {
                                 let _ = tx.send(Action::RemoteListingFailed(e));
@@ -419,7 +464,8 @@ impl App {
             Action::RemoteViewFile => {
                 if let Some(remote) = self.dual_pane.active_remote()
                     && let Some(entry) = remote.current_entry()
-                    && !entry.is_dir {
+                    && !entry.is_dir
+                {
                     let session = remote.session.clone();
                     let remote_path = entry.remote_path.clone();
                     let name = entry.name.clone();
@@ -431,13 +477,11 @@ impl App {
                             .and_then(|e| e.to_str())
                             .map(|e| format!(".{}", e))
                             .unwrap_or_default();
-                        let tmp = match tempfile::Builder::new()
-                            .suffix(&suffix)
-                            .tempfile()
-                        {
+                        let tmp = match tempfile::Builder::new().suffix(&suffix).tempfile() {
                             Ok(f) => f,
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteOpError(format!("Tempfile error: {}", e)));
+                                let _ = tx
+                                    .send(Action::RemoteOpError(format!("Tempfile error: {}", e)));
                                 return;
                             }
                         };
@@ -450,7 +494,10 @@ impl App {
                                 let _ = tx.send(Action::RemoteViewReady(tmp_path));
                             }
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteOpError(format!("Download for view failed: {}", e)));
+                                let _ = tx.send(Action::RemoteOpError(format!(
+                                    "Download for view failed: {}",
+                                    e
+                                )));
                             }
                         }
                     });
@@ -474,7 +521,10 @@ impl App {
                         let sess = session.lock().await;
                         match sess.list_dir(&current_path).await {
                             Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing { path: current_path, entries });
+                                let _ = tx.send(Action::RemoteListing {
+                                    path: current_path,
+                                    entries,
+                                });
                             }
                             Err(e) => {
                                 let _ = tx.send(Action::RemoteListingFailed(e));
@@ -491,7 +541,8 @@ impl App {
                 // Re-open connect dialog with last config pre-filled
                 let mut state = SshConnectState::new();
                 if let Some(last) = SessionConfig::load().last_ssh
-                    && !last.host.is_empty() {
+                    && !last.host.is_empty()
+                {
                     state.fields[0] = last.host;
                     state.fields[1] = last.port.to_string();
                     state.fields[2] = last.user;
@@ -511,7 +562,10 @@ impl App {
                         let sess = session.lock().await;
                         match sess.list_dir(&current_path).await {
                             Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing { path: current_path, entries });
+                                let _ = tx.send(Action::RemoteListing {
+                                    path: current_path,
+                                    entries,
+                                });
                             }
                             Err(e) => {
                                 let _ = tx.send(Action::RemoteListingFailed(e));

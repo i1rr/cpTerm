@@ -8,11 +8,7 @@ use super::App;
 impl App {
     /// Handle actions when the theme editor is open.
     /// Returns true if the action was consumed.
-    pub(super) fn dispatch_theme_editor(
-        &mut self,
-        te: &mut ThemeEditor,
-        action: Action,
-    ) -> bool {
+    pub(super) fn dispatch_theme_editor(&mut self, te: &mut ThemeEditor, action: Action) -> bool {
         // Dialog actions always pass through so dialogs can dismiss
         if self.dialog.is_some() {
             match action {
@@ -37,16 +33,13 @@ impl App {
         self.dispatch_theme_normal(te, action)
     }
 
-    pub(super) fn dispatch_theme_naming(
-        &mut self,
-        te: &mut ThemeEditor,
-        action: Action,
-    ) -> bool {
+    pub(super) fn dispatch_theme_naming(&mut self, te: &mut ThemeEditor, action: Action) -> bool {
         match action {
             Action::InputChar(c) => {
                 // Only allow valid filename chars
                 if (c.is_alphanumeric() || c == '-' || c == '_')
-                    && let Some(ref mut name) = te.naming {
+                    && let Some(ref mut name) = te.naming
+                {
                     name.push(c);
                 }
                 true
@@ -85,11 +78,7 @@ impl App {
         }
     }
 
-    pub(super) fn dispatch_theme_picker(
-        &mut self,
-        te: &mut ThemeEditor,
-        action: Action,
-    ) -> bool {
+    pub(super) fn dispatch_theme_picker(&mut self, te: &mut ThemeEditor, action: Action) -> bool {
         // Compute what to do without holding mutable borrows
         enum PickerOp {
             Move,
@@ -150,11 +139,7 @@ impl App {
         }
     }
 
-    pub(super) fn dispatch_theme_normal(
-        &mut self,
-        te: &mut ThemeEditor,
-        action: Action,
-    ) -> bool {
+    pub(super) fn dispatch_theme_normal(&mut self, te: &mut ThemeEditor, action: Action) -> bool {
         match action {
             Action::MoveUp => {
                 te.move_up();

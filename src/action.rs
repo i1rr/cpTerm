@@ -47,7 +47,9 @@ pub enum Action {
     ViewFile,
     UnpackArchive,
     /// Unpack archive to a specific destination path.
-    UnpackArchiveTo { dest: PathBuf },
+    UnpackArchiveTo {
+        dest: PathBuf,
+    },
     /// Open the context menu for the current file.
     OpenContextMenu,
     /// Open the file as text in the embedded editor (forced, even if binary).

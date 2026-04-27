@@ -107,8 +107,12 @@ pub struct ContextMenuItem {
 }
 
 pub(crate) enum PendingOp {
-    Copy { pairs: Vec<(PathBuf, PathBuf)> },
-    Move { pairs: Vec<(PathBuf, PathBuf)> },
+    Copy {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
+    Move {
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
     Delete(Vec<PathBuf>),
     CloseEditor,
     RemoteDelete {

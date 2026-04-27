@@ -40,13 +40,20 @@ impl App {
                         }
                     }
                     if errors.is_empty() {
-                        let _ = tx.send(Action::RemoteOpComplete(format!("Deleted {} item(s)", total)));
+                        let _ = tx.send(Action::RemoteOpComplete(format!(
+                            "Deleted {} item(s)",
+                            total
+                        )));
                     } else {
                         let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
                     }
                 });
             }
-            PendingOp::RemoteDownload { paths, session, dest } => {
+            PendingOp::RemoteDownload {
+                paths,
+                session,
+                dest,
+            } => {
                 tokio::spawn(async move {
                     let sess = session.lock().await;
                     let mut errors = Vec::new();
@@ -59,13 +66,20 @@ impl App {
                         }
                     }
                     if errors.is_empty() {
-                        let _ = tx.send(Action::OperationComplete(format!("Downloaded {} item(s)", total)));
+                        let _ = tx.send(Action::OperationComplete(format!(
+                            "Downloaded {} item(s)",
+                            total
+                        )));
                     } else {
                         let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
                     }
                 });
             }
-            PendingOp::RemoteUpload { paths, session, remote_dest } => {
+            PendingOp::RemoteUpload {
+                paths,
+                session,
+                remote_dest,
+            } => {
                 tokio::spawn(async move {
                     let sess = session.lock().await;
                     let mut errors = Vec::new();
@@ -81,7 +95,10 @@ impl App {
                         }
                     }
                     if errors.is_empty() {
-                        let _ = tx.send(Action::RemoteOpComplete(format!("Uploaded {} item(s)", total)));
+                        let _ = tx.send(Action::RemoteOpComplete(format!(
+                            "Uploaded {} item(s)",
+                            total
+                        )));
                     } else {
                         let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
                     }
@@ -96,7 +113,8 @@ impl App {
         };
         let mut sources = explorer.selected_paths();
         if sources.is_empty()
-            && let Some(entry) = explorer.current_entry() {
+            && let Some(entry) = explorer.current_entry()
+        {
             sources.push(entry.path.clone());
         }
         sources
@@ -108,7 +126,8 @@ impl App {
         }
         // Handle remote rename
         if let Some(remote) = self.dual_pane.active_remote()
-            && let Some(entry) = remote.current_entry() {
+            && let Some(entry) = remote.current_entry()
+        {
             let old_remote_path = entry.remote_path.clone();
             let parent_path = remote.current_path.clone();
             let session = remote.session.clone();
@@ -123,7 +142,10 @@ impl App {
                 let sess = session.lock().await;
                 match sess.rename(&old_remote_path, &new_remote_path).await {
                     Ok(()) => {
-                        let _ = tx.send(Action::RemoteOpComplete(format!("Renamed to {}", new_name_owned)));
+                        let _ = tx.send(Action::RemoteOpComplete(format!(
+                            "Renamed to {}",
+                            new_name_owned
+                        )));
                     }
                     Err(e) => {
                         let _ = tx.send(Action::RemoteOpError(format!("Rename failed: {}", e)));
@@ -172,7 +194,10 @@ impl App {
                 let sess = session.lock().await;
                 match sess.mkdir(&new_path).await {
                     Ok(()) => {
-                        let _ = tx.send(Action::RemoteOpComplete(format!("Created directory {}", name_owned)));
+                        let _ = tx.send(Action::RemoteOpComplete(format!(
+                            "Created directory {}",
+                            name_owned
+                        )));
                     }
                     Err(e) => {
                         let _ = tx.send(Action::RemoteOpError(format!("Mkdir failed: {}", e)));
@@ -237,7 +262,9 @@ impl App {
                     crate::fs::archive::UnpackCommand::Direct { program, args } => {
                         log::debug!(
                             "unpack: spawning direct task: {} {:?} in cwd={}",
-                            program, args, cwd.display()
+                            program,
+                            args,
+                            cwd.display()
                         );
                         tokio::spawn(task::run_task_direct(program, args, cwd, tx));
                     }
@@ -267,15 +294,25 @@ impl App {
                         if selected.is_empty() {
                             return true;
                         }
-                        let paths: Vec<String> = selected.iter().filter(|e| !e.is_dir).map(|e| e.remote_path.clone()).collect();
+                        let paths: Vec<String> = selected
+                            .iter()
+                            .filter(|e| !e.is_dir)
+                            .map(|e| e.remote_path.clone())
+                            .collect();
                         if paths.is_empty() {
-                            self.dialog = Some(Dialog::error("Cannot download directories (not yet supported)"));
+                            self.dialog = Some(Dialog::error(
+                                "Cannot download directories (not yet supported)",
+                            ));
                             return true;
                         }
                         let dest = self.dual_pane.inactive_dir();
                         let session = remote.session.clone();
                         let count = paths.len();
-                        self.pending_op = Some(PendingOp::RemoteDownload { paths, session, dest: dest.clone() });
+                        self.pending_op = Some(PendingOp::RemoteDownload {
+                            paths,
+                            session,
+                            dest: dest.clone(),
+                        });
                         self.dialog = Some(Dialog::confirm(
                             "Download",
                             format!("Download {} file(s) to {}?", count, dest.display()),
@@ -291,7 +328,11 @@ impl App {
                         let remote_dest = remote.current_path.clone();
                         let session = remote.session.clone();
                         let count = sources.len();
-                        self.pending_op = Some(PendingOp::RemoteUpload { paths: sources, session, remote_dest: remote_dest.clone() });
+                        self.pending_op = Some(PendingOp::RemoteUpload {
+                            paths: sources,
+                            session,
+                            remote_dest: remote_dest.clone(),
+                        });
                         self.dialog = Some(Dialog::confirm(
                             "Upload",
                             format!("Upload {} item(s) to {}?", count, remote_dest),
@@ -435,7 +476,8 @@ impl App {
                     .dual_pane
                     .active_explorer()
                     .and_then(|e| e.current_entry())
-                    && !entry.is_dir {
+                    && !entry.is_dir
+                {
                     self.input_mode = InputMode::UnpackChoice {
                         archive: entry.path.clone(),
                     };
@@ -474,7 +516,11 @@ impl App {
                 true
             }
             Action::Rename => {
-                if let Some(entry) = self.dual_pane.active_remote().and_then(|r| r.current_entry()) {
+                if let Some(entry) = self
+                    .dual_pane
+                    .active_remote()
+                    .and_then(|r| r.current_entry())
+                {
                     self.input_mode = InputMode::Rename(entry.name.clone());
                 } else if let Some(entry) = self
                     .dual_pane
@@ -495,7 +541,9 @@ impl App {
             }
             Action::CreateFile => {
                 if self.dual_pane.active_remote().is_some() {
-                    self.dialog = Some(Dialog::error("Cannot create files in remote pane (not yet supported)"));
+                    self.dialog = Some(Dialog::error(
+                        "Cannot create files in remote pane (not yet supported)",
+                    ));
                 } else {
                     self.input_mode = InputMode::CreateFile(String::new());
                 }

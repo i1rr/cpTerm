@@ -36,12 +36,13 @@ impl EventHandler {
                 };
                 if has_event {
                     match event::read() {
-                        Ok(CrosstermEvent::Key(key)) => {
+                        Ok(CrosstermEvent::Key(key))
                             if key.kind == KeyEventKind::Press
-                                && tx.send(Event::Key(key)).is_err() {
-                                break;
-                            }
+                                && tx.send(Event::Key(key)).is_err() =>
+                        {
+                            break;
                         }
+                        Ok(CrosstermEvent::Key(_)) => {}
                         Ok(CrosstermEvent::Resize(w, h)) => {
                             let _ = tx.send(Event::Resize(w, h));
                         }

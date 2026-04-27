@@ -67,8 +67,8 @@ impl SessionConfig {
         let named_path = confy::get_configuration_file_path("cpt", Some("cpt")).ok();
         let legacy_path = confy::get_configuration_file_path("cpt", None).ok(); // default-config.toml
 
-        let named_exists = named_path.as_ref().map_or(false, |p| p.exists());
-        let legacy_exists = legacy_path.as_ref().map_or(false, |p| p.exists());
+        let named_exists = named_path.as_ref().is_some_and(|p| p.exists());
+        let legacy_exists = legacy_path.as_ref().is_some_and(|p| p.exists());
 
         let (mut config, needs_save): (Self, bool) = if !named_exists && legacy_exists {
             log::warn!("migrating session config from default-config.toml to cpt.toml");

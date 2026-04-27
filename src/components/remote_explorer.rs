@@ -54,7 +54,8 @@ impl RemoteExplorer {
             .filter(|&i| {
                 let entry = &self.entries[i];
                 if let Some(ref filter) = self.filter_text
-                    && !filter.is_empty() {
+                    && !filter.is_empty()
+                {
                     return entry.name.to_lowercase().contains(&filter.to_lowercase());
                 }
                 true
@@ -325,11 +326,7 @@ impl RemoteExplorer {
                 format_size(entry.size)
             };
 
-            let date = entry
-                .modified
-                .as_ref()
-                .map(format_date)
-                .unwrap_or_default();
+            let date = entry.modified.as_ref().map(format_date).unwrap_or_default();
 
             let mut style = Style::default();
             if entry.is_dir {

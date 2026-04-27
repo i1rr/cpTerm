@@ -34,11 +34,13 @@ pub fn open_in_viewer(path: &Path) -> Result<(), String> {
 #[allow(dead_code)]
 pub fn resolve_editor() -> String {
     if let Ok(e) = std::env::var("EDITOR")
-        && !e.trim().is_empty() {
+        && !e.trim().is_empty()
+    {
         return e;
     }
     if let Ok(e) = std::env::var("VISUAL")
-        && !e.trim().is_empty() {
+        && !e.trim().is_empty()
+    {
         return e;
     }
     if cfg!(windows) {
@@ -56,4 +58,3 @@ pub fn resolve_editor() -> String {
         }
     }
 }
-

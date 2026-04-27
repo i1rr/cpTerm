@@ -32,7 +32,8 @@ impl App {
 
             // Mark new files that appeared after extraction
             if code == 0
-                && let Some((dir, old_files)) = snapshot {
+                && let Some((dir, old_files)) = snapshot
+            {
                 let mut new_paths = Vec::new();
                 if let Ok(rd) = std::fs::read_dir(&dir) {
                     for entry in rd.flatten() {

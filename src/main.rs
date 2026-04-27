@@ -32,15 +32,9 @@ async fn main() -> Result<()> {
     }
     let session = SessionConfig::load();
 
-    let left_dir = args
-        .path
-        .map(canonicalize_or)
-        .unwrap_or(session.left_dir);
+    let left_dir = args.path.map(canonicalize_or).unwrap_or(session.left_dir);
 
-    let right_dir = args
-        .right
-        .map(canonicalize_or)
-        .unwrap_or(session.right_dir);
+    let right_dir = args.right.map(canonicalize_or).unwrap_or(session.right_dir);
 
     let active = session.active_pane;
     let theme_name = session.theme_name;
