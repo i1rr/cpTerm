@@ -1,0 +1,58 @@
+mod action;
+mod app;
+mod bookmarks;
+mod cli;
+mod components;
+mod config;
+mod event;
+mod fs;
+mod logger;
+mod ssh;
+mod task;
+mod theme;
+mod tui;
+mod util;
+
+use std::path::PathBuf;
+
+use clap::Parser;
+use color_eyre::eyre::Result;
+
+use crate::cli::Cli;
+use crate::config::SessionConfig;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    color_eyre::install()?;
+    logger::init();
+
+    let args = Cli::parse();
+    if args.debug {
+        logger::enable_debug();
+    }
+    let session = SessionConfig::load();
+
+    let left_dir = args
+        .path
+        .map(canonicalize_or)
+        .unwrap_or(session.left_dir);
+
+    let right_dir = args
+        .right
+        .map(canonicalize_or)
+        .unwrap_or(session.right_dir);
+
+    let active = session.active_pane;
+    let theme_name = session.theme_name;
+
+    let mut app = app::App::new(left_dir, right_dir, active, theme_name);
+    app.run().await?;
+
+    logger::dump();
+
+    Ok(())
+}
+
+fn canonicalize_or(path: PathBuf) -> PathBuf {
+    util::clean_canonicalize(&path).unwrap_or(path)
+}
