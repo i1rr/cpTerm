@@ -72,6 +72,17 @@ impl App {
             }
         }
 
+        if self.drives_panel.is_some() {
+            let mut dp = self.drives_panel.take().unwrap();
+            let (handled, keep) = self.dispatch_drives_panel(&mut dp, action.clone());
+            if keep {
+                self.drives_panel = Some(dp);
+            }
+            if handled {
+                return;
+            }
+        }
+
         if self.theme_editor.is_some() {
             let mut te = self.theme_editor.take().unwrap();
             let handled = self.dispatch_theme_editor(&mut te, action.clone());
@@ -140,6 +151,14 @@ impl App {
             Action::OpenBookmarks => {
                 self.bookmark_panel = Some(BookmarkPanel::new(0));
             }
+            Action::OpenDrives { for_side } => {
+                if let Some(side) = for_side {
+                    self.dual_pane.active = side;
+                }
+                let drives = crate::fs::drives::list_drives();
+                self.drives_panel = Some(crate::components::drives_panel::DrivesPanel::new(drives));
+            }
+            Action::DriveNavigate | Action::DriveClose => {}
             Action::OpenThemeEditor => {
                 self.theme_editor = Some(ThemeEditor::new());
             }
@@ -476,6 +495,9 @@ impl App {
                      F6 - move to other pane\n\
                      F8/Del - delete\n\
                      Ctrl+B - bookmarks\n\
+                     Alt+F1 - drives panel (left pane)\n\
+                     Alt+F2 - drives panel (right pane)\n\
+                     Ctrl+\\ - drives panel (active pane)\n\
                      Ctrl+F - quick filter\n\
                      Ctrl+O - SSH connect (remote browsing)\n\
                      Ctrl+O on remote pane - disconnect\n\

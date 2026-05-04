@@ -37,6 +37,11 @@ impl App {
             return self.map_bookmark_panel_key(key, panel);
         }
 
+        // Drives panel intercepts
+        if self.drives_panel.is_some() {
+            return Self::map_drives_panel_key(key);
+        }
+
         // Theme editor intercepts (with sub-states)
         if let Some(ref editor) = self.theme_editor {
             return self.map_theme_editor_key(key, editor);
@@ -188,6 +193,13 @@ impl App {
                 Action::DeleteSelected
             }
             (KeyModifiers::CONTROL, KeyCode::Char('b')) => Action::OpenBookmarks,
+            (KeyModifiers::ALT, KeyCode::F(1)) => Action::OpenDrives {
+                for_side: Some(crate::config::PaneSide::Left),
+            },
+            (KeyModifiers::ALT, KeyCode::F(2)) => Action::OpenDrives {
+                for_side: Some(crate::config::PaneSide::Right),
+            },
+            (KeyModifiers::CONTROL, KeyCode::Char('\\')) => Action::OpenDrives { for_side: None },
             (KeyModifiers::CONTROL, KeyCode::Char('f')) => Action::StartFilter,
             (KeyModifiers::CONTROL, KeyCode::Char('o')) => Action::SshConnect,
             (KeyModifiers::CONTROL, KeyCode::Char('t')) => Action::OpenThemeEditor,
@@ -242,6 +254,18 @@ impl App {
             KeyCode::Char('e') => Action::ThemeEditorOpenFile,
             KeyCode::Delete => Action::ThemeEditorDelete,
             KeyCode::Esc => Action::ThemeEditorClose,
+            _ => Action::Noop,
+        }
+    }
+
+    pub(super) fn map_drives_panel_key(key: KeyEvent) -> Action {
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => Action::MoveUp,
+            (KeyModifiers::NONE, KeyCode::Down) => Action::MoveDown,
+            (KeyModifiers::NONE, KeyCode::Home) => Action::MoveToTop,
+            (KeyModifiers::NONE, KeyCode::End) => Action::MoveToBottom,
+            (KeyModifiers::NONE, KeyCode::Enter) => Action::DriveNavigate,
+            (KeyModifiers::NONE, KeyCode::Esc) => Action::DriveClose,
             _ => Action::Noop,
         }
     }

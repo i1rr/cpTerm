@@ -35,11 +35,12 @@ The `app` module is split:
 | `app/input.rs` | `map_event()`, `map_key()`, overlay key mappers |
 | `app/dispatch.rs` | Main `dispatch()` coordinator; enforces modal priority |
 | `app/dispatch_bm.rs` | Bookmark panel sub-dispatcher |
+| `app/dispatch_drives.rs` | Drives panel sub-dispatcher |
 | `app/dispatch_theme.rs` | Theme editor sub-dispatcher |
 | `app/dispatch_fs.rs` | Copy/move/delete/rename/mkdir/unpack |
 | `app/dispatch_ssh.rs` | SSH connect, remote ops, `do_command()` |
 
-**Dispatch priority** (must be preserved): task streaming early-return > bookmark panel > theme editor > context menu > FS > SSH > core normal-mode arms.
+**Dispatch priority** (must be preserved): task streaming early-return > bookmark panel > drives panel > theme editor > context menu > FS > SSH > core normal-mode arms.
 
 ### Pane model
 
@@ -57,6 +58,7 @@ The `app` module is split:
 - `fs/archive.rs` - `resolve_unpack_command()` picks the best available tool per format and OS
 - `fs/open.rs` - OS-default opener (`open::that()`) and pager launcher for F3
 - `fs/entry.rs` - `FileEntry` and sorting
+- `fs/drives.rs` - cross-platform `list_drives()`: Windows letter scan, macOS `/Volumes`, Linux `/mnt` + `/media[/<user>]` + `/run/media/<user>`. No new deps. Always includes `/` as Root on Unix.
 
 ### Session persistence
 
@@ -76,6 +78,7 @@ confy 1.x prepends the `rs.` qualifier to the app dir. Bookmarks live in `bookma
 | `command_bar` | F-key hints and text input for filter/rename/mkdir/create |
 | `dialog` | Modal dialogs: confirm, conflict, error, scrollable info |
 | `bookmark_panel` | Overlay panel: navigate, add, remove bookmarks |
+| `drives_panel` | Overlay panel: pick a drive (Win) or mount (`/Volumes`, `/media`, `/mnt`); also auto-opens when `ParentDir` is invoked at the FS root |
 | `theme_editor` | Overlay with 256-color picker and live preview |
 | `task_window` | Floating live-output window, scrollable, minimizable |
 

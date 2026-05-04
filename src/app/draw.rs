@@ -43,6 +43,10 @@ impl App {
             panel.draw(frame, frame.area(), &self.bookmarks, &self.theme);
         }
 
+        if let Some(ref mut panel) = self.drives_panel {
+            panel.draw(frame, frame.area(), &self.theme);
+        }
+
         if let Some(ref mut editor) = self.theme_editor {
             editor.draw(frame, frame.area(), &self.theme, &self.theme_name);
         }

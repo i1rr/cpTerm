@@ -206,8 +206,11 @@ impl Explorer {
                             }
                         }
                     }
+                    None
+                } else {
+                    // Already at filesystem root: surface the drives picker.
+                    Some(Action::OpenDrives { for_side: None })
                 }
-                None
             }
             Action::ToggleSelect => {
                 if let Some(idx) = self.entry_index_at_cursor() {

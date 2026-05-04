@@ -1,6 +1,7 @@
 pub mod bookmark_panel;
 pub mod command_bar;
 pub mod dialog;
+pub mod drives_panel;
 pub mod dual_pane;
 pub mod editor_pane;
 pub mod explorer;

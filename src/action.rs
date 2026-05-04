@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::PaneSide;
+
 /// All application actions (messages).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -94,6 +96,13 @@ pub enum Action {
     BookmarkAdd,
     BookmarkRemove,
     BookmarkClose,
+    // Drives / volumes
+    /// Open the drives panel. If `for_side` is set, focus that pane first.
+    OpenDrives {
+        for_side: Option<PaneSide>,
+    },
+    DriveNavigate,
+    DriveClose,
     // Theme editor
     OpenThemeEditor,
     ThemeEditorClose,

@@ -8,6 +8,7 @@ use crate::action::Action;
 use crate::bookmarks::BookmarkList;
 use crate::components::bookmark_panel::BookmarkPanel;
 use crate::components::dialog::Dialog;
+use crate::components::drives_panel::DrivesPanel;
 use crate::components::dual_pane::DualPane;
 use crate::components::theme_editor::ThemeEditor;
 use crate::config::{PaneSide, SessionConfig};
@@ -22,6 +23,7 @@ pub use types::*;
 
 mod dispatch;
 mod dispatch_bm;
+mod dispatch_drives;
 mod dispatch_fs;
 mod dispatch_ssh;
 mod dispatch_theme;
@@ -51,6 +53,7 @@ pub struct App {
     pub theme_name: String,
     pub theme_editor: Option<ThemeEditor>,
     pub bookmark_panel: Option<BookmarkPanel>,
+    pub drives_panel: Option<DrivesPanel>,
     pub bookmarks: BookmarkList,
     pub task: Option<TaskState>,
     action_tx: mpsc::UnboundedSender<Action>,
@@ -97,6 +100,7 @@ impl App {
             theme_name,
             theme_editor: None,
             bookmark_panel: None,
+            drives_panel: None,
             bookmarks,
             task: None,
             action_tx,
@@ -204,6 +208,7 @@ mod tests {
             theme_name: "default".to_string(),
             theme_editor: None,
             bookmark_panel: None,
+            drives_panel: None,
             bookmarks: BookmarkList::default(),
             task: None,
             action_tx,
@@ -605,5 +610,83 @@ mod tests {
         let mut app = make_app();
         app.dispatch(Action::SshConnect);
         assert!(matches!(app.input_mode, InputMode::SshConnect(_)));
+    }
+
+    // ── Drives panel ──────────────────────────────────────────
+
+    #[test]
+    fn alt_f1_maps_to_open_drives_for_left() {
+        let app = make_app();
+        let action = app.map_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::ALT));
+        assert!(matches!(
+            action,
+            Action::OpenDrives {
+                for_side: Some(PaneSide::Left)
+            }
+        ));
+    }
+
+    #[test]
+    fn alt_f2_maps_to_open_drives_for_right() {
+        let app = make_app();
+        let action = app.map_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::ALT));
+        assert!(matches!(
+            action,
+            Action::OpenDrives {
+                for_side: Some(PaneSide::Right)
+            }
+        ));
+    }
+
+    #[test]
+    fn ctrl_backslash_maps_to_open_drives_active() {
+        let app = make_app();
+        let action = app.map_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL));
+        assert!(matches!(action, Action::OpenDrives { for_side: None }));
+    }
+
+    #[test]
+    fn open_drives_focuses_requested_side_and_shows_panel() {
+        let mut app = make_app();
+        app.dual_pane.active = PaneSide::Left;
+        app.dispatch(Action::OpenDrives {
+            for_side: Some(PaneSide::Right),
+        });
+        assert!(app.drives_panel.is_some());
+        assert_eq!(app.dual_pane.active, PaneSide::Right);
+    }
+
+    #[test]
+    fn drive_close_hides_panel() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenDrives { for_side: None });
+        app.dispatch(Action::DriveClose);
+        assert!(app.drives_panel.is_none());
+    }
+
+    #[test]
+    fn drives_panel_intercepts_up_down() {
+        let mut app = make_app();
+        app.dispatch(Action::OpenDrives { for_side: None });
+        // Inject a couple of fake drives so navigation has something to move over.
+        let panel = app.drives_panel.as_mut().unwrap();
+        panel.drives.push(crate::fs::drives::DriveEntry {
+            label: "X".to_string(),
+            path: std::path::PathBuf::from("/x"),
+            kind: crate::fs::drives::DriveKind::Mount,
+        });
+        panel.drives.push(crate::fs::drives::DriveEntry {
+            label: "Y".to_string(),
+            path: std::path::PathBuf::from("/y"),
+            kind: crate::fs::drives::DriveKind::Mount,
+        });
+        panel.cursor = 0;
+        let start = panel.cursor;
+        app.dispatch(Action::MoveDown);
+        let panel = app.drives_panel.as_ref().unwrap();
+        assert_eq!(panel.cursor, start + 1);
+        app.dispatch(Action::MoveUp);
+        let panel = app.drives_panel.as_ref().unwrap();
+        assert_eq!(panel.cursor, start);
     }
 }

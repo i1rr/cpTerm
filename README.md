@@ -19,6 +19,7 @@ Single native binary, no runtime dependencies.
 - Multi-select (Space, Ctrl+A) with size totals
 - Quick filter (Ctrl+F) on the active pane
 - Bookmarks panel (Ctrl+B), persisted to disk
+- Drives / mounts panel (Alt+F1, Alt+F2, Ctrl+\\) for Windows drive letters and Unix mount points
 - 256-color theme editor (Ctrl+T) with live preview
 - Embedded text editor (Enter on a file): undo/redo, search, copy/paste
 - Archive unpack and pack: `.zip`, `.tar.*`, `.7z`, `.rar`, `.gz`, `.bz2`, `.xz`
@@ -61,6 +62,8 @@ cpt --debug               # write log to cpt.log
 | `Ctrl+A` | Select all (toggle) |
 | `Ctrl+F` | Quick filter (or search in editor) |
 | `Ctrl+B` | Bookmarks panel |
+| `Alt+F1` / `Alt+F2` | Drives panel (left / right pane) |
+| `Ctrl+\` | Drives panel (active pane) |
 | `Ctrl+T` | Theme editor |
 | `Ctrl+O` | SSH connect dialog |
 | `Ctrl+Z` | Minimize / restore task window |
