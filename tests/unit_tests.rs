@@ -1459,78 +1459,48 @@ fn resolve_unpack_unknown_format_returns_err() {
     assert!(err.contains("unsupported"), "{}", err);
 }
 
-// ── resolve_editor / resolve_pager (env-driven) ─────────────
-//
-// These tests mutate process-wide env vars. They are sequenced manually by
-// saving and restoring the original values; they are kept compact to minimise
-// the window of cross-test interference.
-
 #[test]
-fn resolve_editor_prefers_editor_then_visual_then_builtin() {
-    use cpt::fs::open::resolve_editor;
-    let saved_editor = std::env::var_os("EDITOR");
-    let saved_visual = std::env::var_os("VISUAL");
-
-    unsafe {
-        std::env::set_var("EDITOR", "my_custom_editor");
+fn tool_preferences_use_child_process_environments() {
+    use cpt::fs::open::{resolve_editor, resolve_pager};
+    if let Ok(mode) = std::env::var("CPT_TOOL_PREFERENCE_TEST") {
+        assert_eq!(
+            resolve_editor(),
+            if mode == "editor" {
+                "my-editor"
+            } else {
+                "my-visual"
+            }
+        );
+        assert_eq!(
+            resolve_pager(),
+            if mode == "editor" {
+                "my-pager"
+            } else if cfg!(windows) {
+                "more"
+            } else {
+                "less"
+            }
+        );
+        return;
     }
-    assert_eq!(resolve_editor(), "my_custom_editor");
-
-    unsafe {
-        std::env::set_var("EDITOR", "");
-        std::env::set_var("VISUAL", "my_visual");
-    }
-    assert_eq!(resolve_editor(), "my_visual");
-
-    unsafe {
-        std::env::remove_var("EDITOR");
-        std::env::remove_var("VISUAL");
-    }
-    let fallback = resolve_editor();
-    assert!(!fallback.is_empty());
-    #[cfg(windows)]
-    assert_eq!(fallback, "notepad");
-
-    unsafe {
-        match saved_editor {
-            Some(v) => std::env::set_var("EDITOR", v),
-            None => std::env::remove_var("EDITOR"),
+    for mode in ["editor", "visual"] {
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact", "tool_preferences_use_child_process_environments"])
+            .env("CPT_TOOL_PREFERENCE_TEST", mode)
+            .env("VISUAL", "my-visual")
+            .env_remove("PAGER")
+            .env_remove("EDITOR");
+        if mode == "editor" {
+            cmd.env("EDITOR", "my-editor").env("PAGER", "my-pager");
         }
-        match saved_visual {
-            Some(v) => std::env::set_var("VISUAL", v),
-            None => std::env::remove_var("VISUAL"),
-        }
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
 }
-
-#[test]
-fn resolve_pager_prefers_pager_then_builtin() {
-    use cpt::fs::open::resolve_pager;
-    let saved = std::env::var_os("PAGER");
-
-    unsafe {
-        std::env::set_var("PAGER", "my_custom_pager");
-    }
-    assert_eq!(resolve_pager(), "my_custom_pager");
-
-    unsafe {
-        std::env::remove_var("PAGER");
-    }
-    let fallback = resolve_pager();
-    assert!(!fallback.is_empty());
-    #[cfg(windows)]
-    assert_eq!(fallback, "more");
-    #[cfg(not(windows))]
-    assert_eq!(fallback, "less");
-
-    unsafe {
-        match saved {
-            Some(v) => std::env::set_var("PAGER", v),
-            None => std::env::remove_var("PAGER"),
-        }
-    }
-}
-
 // Compile-time smoke test that UnpackCommand variants are still constructable;
 // without this the `Direct` variant can be silently removed by refactors.
 #[test]
