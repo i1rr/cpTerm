@@ -143,6 +143,21 @@ impl App {
 
         match action {
             Action::Quit => {
+                use crate::components::dual_pane::PaneContent;
+                use crate::config::PaneSide;
+                let modified = [
+                    (PaneSide::Left, &self.dual_pane.left),
+                    (PaneSide::Right, &self.dual_pane.right),
+                ]
+                .into_iter()
+                .find_map(|(side, pane)| {
+                    matches!(pane, PaneContent::Editor(e) if e.modified).then_some(side)
+                });
+                if let Some(side) = modified {
+                    self.dual_pane.active = side;
+                    self.dispatch(Action::CloseEditor);
+                    return;
+                }
                 self.save_session();
                 self.should_quit = true;
             }
@@ -163,6 +178,7 @@ impl App {
                 self.theme_editor = Some(ThemeEditor::new());
             }
             Action::DismissDialog => {
+                self.pending_op = None;
                 self.dialog = None;
             }
             Action::DialogScrollUp => {

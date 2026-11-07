@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -17,14 +18,27 @@ pub struct EditorPane {
     pub textarea: TextArea<'static>,
     pub read_only: bool,
     pub modified: bool,
+    original: String,
     /// Directory from which the editor was opened - restored when editor is closed.
     pub origin_dir: PathBuf,
 }
 
 impl EditorPane {
     pub fn open(path: PathBuf, origin_dir: PathBuf, read_only: bool) -> Result<Self, String> {
-        let content = fs::read_to_string(&path)
+        const LIMIT: u64 = 8 * 1024 * 1024;
+        let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+        if !meta.is_file() || meta.len() > LIMIT {
+            return Err(
+                "The editor accepts regular text files up to 8 MiB; use F3 for larger files".into(),
+            );
+        }
+        let mut content = String::new();
+        let read = fs::File::open(&path)
+            .and_then(|f| f.take(LIMIT + 1).read_to_string(&mut content))
             .map_err(|e| format!("Cannot open '{}': {}", path.display(), e))?;
+        if read as u64 > LIMIT {
+            return Err("File exceeds the 8 MiB editor limit".into());
+        }
 
         // Split into lines preserving empty trailing lines
         let lines: Vec<String> = if content.is_empty() {
@@ -52,6 +66,7 @@ impl EditorPane {
             textarea,
             read_only,
             modified: false,
+            original: content,
             origin_dir,
         })
     }
@@ -61,16 +76,48 @@ impl EditorPane {
         if self.read_only {
             return Err("File is read-only".to_string());
         }
-        let lines = self.textarea.lines();
-        // Join lines with newline; strip the synthetic trailing empty line if present
-        let content = if lines.last().map(|l| l.is_empty()).unwrap_or(false) && lines.len() > 1 {
-            let joined = lines[..lines.len() - 1].join("\n");
-            format!("{}\n", joined)
-        } else {
-            lines.join("\n")
-        };
-        fs::write(&self.path, content)
-            .map_err(|e| format!("Cannot save '{}': {}", self.path.display(), e))?;
+        let mut old_lines = self.original.split_inclusive('\n');
+        let mut ending = self
+            .original
+            .split_inclusive('\n')
+            .next()
+            .map_or("\n", |s| if s.ends_with("\r\n") { "\r\n" } else { "\n" });
+        let mut content = String::new();
+        for (index, line) in self.textarea.lines().iter().enumerate() {
+            if index > 0 {
+                if let Some(previous) = old_lines.next() {
+                    if previous.ends_with("\r\n") {
+                        ending = "\r\n";
+                    } else if previous.ends_with('\n') {
+                        ending = "\n";
+                    }
+                }
+                content.push_str(ending);
+            }
+            content.push_str(line);
+        }
+        if content != self.original {
+            // Compare and update the same open file. Preserve permissions, hard links
+            // and other metadata, and never recreate a file deleted by someone else.
+            let mut file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path)
+                .map_err(|e| format!("Cannot save '{}': {e}", self.path.display()))?;
+            let mut current = Vec::new();
+            (&mut file)
+                .take(self.original.len() as u64 + 1)
+                .read_to_end(&mut current)
+                .map_err(|e| e.to_string())?;
+            if current != self.original.as_bytes() {
+                return Err("File changed on disk; reopen it before saving".into());
+            }
+            file.rewind()
+                .and_then(|()| file.write_all(content.as_bytes()))
+                .and_then(|()| file.set_len(content.len() as u64))
+                .map_err(|e| e.to_string())?;
+            self.original = content;
+        }
         self.modified = false;
         Ok(())
     }
@@ -113,7 +160,19 @@ impl EditorPane {
             _ => {
                 if self.read_only {
                     // Read-only: allow navigation keys via textarea (scrolling)
-                    self.textarea.input(key);
+                    if matches!(
+                        key.code,
+                        KeyCode::Left
+                            | KeyCode::Right
+                            | KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::Home
+                            | KeyCode::End
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
+                    ) {
+                        self.textarea.input(key);
+                    }
                 } else {
                     let changed = self.textarea.input(key);
                     if changed {
@@ -180,5 +239,25 @@ impl EditorPane {
         }
 
         frame.render_widget(&self.textarea, inner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saves_preserve_mixed_line_endings_and_reject_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("example.txt");
+        fs::write(&path, "one\r\ntwo\n").unwrap();
+        let mut editor = EditorPane::open(path.clone(), dir.path().into(), false).unwrap();
+        editor.textarea.insert_str("new ");
+        editor.save().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new one\r\ntwo\n");
+        editor.textarea.insert_str("unsaved");
+        fs::write(&path, "external edit").unwrap();
+        assert!(editor.save().is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external edit");
     }
 }
