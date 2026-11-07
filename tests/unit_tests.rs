@@ -8,7 +8,7 @@ use cpt::components::dialog::{Dialog, DialogKind};
 use cpt::components::dual_pane::{DualPane, PaneContent};
 use cpt::components::explorer::Explorer;
 use cpt::config::PaneSide;
-use cpt::fs::archive::{UnpackCommand, resolve_unpack_command};
+use cpt::fs::archive::resolve_unpack_command;
 use cpt::fs::entry::{FileEntry, SortColumn, read_directory, sort_entries};
 use cpt::fs::ops::{
     build_pairs, copy_entries, delete_entries, find_conflicts, move_entries, rename_conflicts,
@@ -1371,87 +1371,20 @@ async fn run_task_reports_nonzero_exit_or_error_for_bad_cwd() {
 // ── resolve_unpack_command (pure resolution) ────────────────
 
 #[test]
-fn resolve_unpack_tar_uses_tar_for_all_tar_variants() {
-    for name in [
-        "archive.tar",
-        "archive.tar.gz",
-        "archive.tgz",
-        "archive.tar.bz2",
-        "archive.tbz2",
-        "archive.tar.xz",
+fn supported_archives_resolve_with_the_source_and_destination_in_the_title() {
+    for ext in [
+        "tar", "gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "zip", "rar", "7z",
     ] {
-        let archive = PathBuf::from(format!("/src/{}", name));
-        let dest = PathBuf::from("/my/dest dir");
-        let unpack = resolve_unpack_command(&archive, &dest)
-            .unwrap_or_else(|e| panic!("{} should resolve, got: {}", name, e));
-        let cmd = unpack.display();
-        assert!(cmd.contains("tar"), "{} should use tar, got: {}", name, cmd);
-        assert!(
-            cmd.contains(name),
-            "command should mention archive: {}",
-            cmd
-        );
-        assert!(
-            cmd.contains("dest dir"),
-            "command should mention dest: {}",
-            cmd
-        );
+        let name = format!("my archive.{ext}");
+        let cmd = resolve_unpack_command(
+            PathBuf::from(&name).as_path(),
+            PathBuf::from("my dest").as_path(),
+        )
+        .unwrap();
+        assert!(cmd.display().contains(&name));
+        assert!(cmd.display().contains("my dest"));
     }
 }
-
-#[test]
-fn resolve_unpack_zip_uses_unzip_or_7z() {
-    let archive = PathBuf::from("/src/files.zip");
-    let dest = PathBuf::from("/dest");
-    match resolve_unpack_command(&archive, &dest) {
-        Ok(unpack) => {
-            let cmd = unpack.display();
-            #[cfg(windows)]
-            assert!(
-                cmd.starts_with("tar "),
-                "Windows ZIP should use bsdtar: {}",
-                cmd
-            );
-            #[cfg(not(windows))]
-            assert!(
-                cmd.contains("unzip") || cmd.contains("7z") || cmd.contains("7za"),
-                "Unix ZIP should use unzip or 7z, got: {}",
-                cmd
-            );
-        }
-        Err(e) => assert!(
-            e.contains("unzip") || e.contains("7z"),
-            "error names tool: {}",
-            e
-        ),
-    }
-}
-
-#[test]
-fn resolve_unpack_7z_and_rar_when_tools_present() {
-    let dest = PathBuf::from("/dest");
-
-    match resolve_unpack_command(&PathBuf::from("/src/data.7z"), &dest) {
-        Ok(c) => {
-            let cmd = c.display();
-            assert!(
-                cmd.contains("7z") || cmd.contains("7za") || cmd.contains("7zz"),
-                "{}",
-                cmd
-            );
-        }
-        Err(e) => assert!(e.contains("7z") || e.contains("7-Zip"), "{}", e),
-    }
-
-    match resolve_unpack_command(&PathBuf::from("/src/archive.rar"), &dest) {
-        Ok(c) => {
-            let cmd = c.display();
-            assert!(cmd.contains("unrar") || cmd.contains("7z"), "{}", cmd);
-        }
-        Err(e) => assert!(e.contains("unrar") || e.contains("7z"), "{}", e),
-    }
-}
-
 #[test]
 fn resolve_unpack_unknown_format_returns_err() {
     let result = resolve_unpack_command(&PathBuf::from("/src/file.docx"), &PathBuf::from("/dest"));
@@ -1500,15 +1433,4 @@ fn tool_preferences_use_child_process_environments() {
             String::from_utf8_lossy(&output.stdout)
         );
     }
-}
-// Compile-time smoke test that UnpackCommand variants are still constructable;
-// without this the `Direct` variant can be silently removed by refactors.
-#[test]
-fn unpack_command_display_quotes_spaces() {
-    let direct = UnpackCommand::Direct {
-        program: "tar".to_string(),
-        args: vec!["-xf".to_string(), "with space".to_string()],
-    };
-    let s = direct.display();
-    assert!(s.contains("tar") && s.contains("\"with space\""), "{}", s);
 }

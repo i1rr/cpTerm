@@ -22,6 +22,10 @@ russh = { version = "0.65.1", default-features = false, features = ["ring"] }
 russh-sftp = "2"
 tempfile = "3"
 flate2 = "1"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "=9.4.1", default-features = false, features = ["deflate-flate2", "deflate64", "bzip2"] }
+cap-std = "4"
+cap-fs-ext = { version = "4", default-features = false, features = ["std"] }
 
 [profile.release]
 lto = true

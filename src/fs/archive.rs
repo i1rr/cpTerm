@@ -1,56 +1,33 @@
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 
-use crate::util::find_sevenzip;
+mod stage;
+use stage::Staged;
+
+const MAX_BYTES: u64 = 1024 * 1024 * 1024;
+const EXPANSION_FLOOR: u64 = 8 * 1024 * 1024;
+const MAX_ENTRIES: usize = 10_000;
 
 #[derive(Debug)]
-pub enum UnpackCommand {
-    Direct {
-        program: String,
-        args: Vec<String>,
-    },
-    Decompress {
-        program: String,
-        archive: String,
-        output: PathBuf,
-    },
+pub struct UnpackCommand {
+    archive: PathBuf,
+    destination: PathBuf,
+    format: Format,
 }
 
-impl UnpackCommand {
-    pub fn display(&self) -> String {
-        match self {
-            Self::Direct { program, args } => format!(
-                "{} {}",
-                program,
-                args.iter()
-                    .map(|s| {
-                        if s.contains(' ') {
-                            format!("{s:?}")
-                        } else {
-                            s.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-            Self::Decompress {
-                program,
-                archive,
-                output,
-            } => format!("{program} {archive} -> {}", output.display()),
-        }
-    }
-}
-
-fn tool_available(tool: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
+#[derive(Debug, Clone, Copy)]
+enum Format {
+    Tar,
+    TarGz,
+    TarBz2,
+    TarXz,
+    Zip,
+    Libarchive,
+    Gz,
+    Bz2,
+    Xz,
 }
 
 pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<UnpackCommand, String> {
@@ -59,88 +36,167 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<UnpackComma
         .and_then(|s| s.to_str())
         .ok_or("Invalid archive filename")?
         .to_lowercase();
-    let archive_arg = archive.to_str().ok_or("Archive path is not UTF-8")?;
-    let dest_arg = dest.to_str().ok_or("Destination path is not UTF-8")?;
-    let direct = |program: &str, args: &[&str]| {
-        Ok(UnpackCommand::Direct {
-            program: program.to_owned(),
-            args: args.iter().map(|a| a.to_string()).collect(),
-        })
-    };
-    if [".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz"]
-        .iter()
-        .any(|s| name.ends_with(s))
-        || (cfg!(windows) && name.ends_with(".zip"))
-    {
-        // Windows ships bsdtar, which reads ZIP and takes literal path arguments.
-        return direct("tar", &["-k", "-xf", archive_arg, "-C", dest_arg]);
+    let format = [
+        (".tar.gz", Format::TarGz),
+        (".tgz", Format::TarGz),
+        (".tar.bz2", Format::TarBz2),
+        (".tbz2", Format::TarBz2),
+        (".tar.xz", Format::TarXz),
+        (".tar", Format::Tar),
+        (".zip", Format::Zip),
+        (".rar", Format::Libarchive),
+        (".7z", Format::Libarchive),
+        (".gz", Format::Gz),
+        (".bz2", Format::Bz2),
+        (".xz", Format::Xz),
+    ]
+    .into_iter()
+    .find(|(suffix, _)| name.ends_with(suffix))
+    .map(|(_, f)| f)
+    .ok_or_else(|| format!("unsupported archive format: {name}"))?;
+    Ok(UnpackCommand {
+        archive: archive.into(),
+        destination: dest.into(),
+        format,
+    })
+}
+
+impl UnpackCommand {
+    pub fn display(&self) -> String {
+        format!(
+            "Extract {} to {}",
+            self.archive.display(),
+            self.destination.display()
+        )
     }
-    if name.ends_with(".zip") && tool_available("unzip") {
-        return direct("unzip", &["-n", archive_arg, "-d", dest_arg]);
+
+    pub async fn run(self) -> Result<(), String> {
+        tokio::task::spawn_blocking(move || self.extract())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
     }
-    if name.ends_with(".rar") && tool_available("unrar") {
-        return direct(
-            "unrar",
-            &["x", "-o-", &format!("-op{dest_arg}"), "--", archive_arg],
-        );
-    }
-    for (suffix, tool) in [(".gz", "gzip"), (".bz2", "bzip2"), (".xz", "xz")] {
-        if name.ends_with(suffix) {
-            let stem = archive
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .filter(|s| crate::util::valid_filename(s))
-                .ok_or("Invalid output filename")?;
-            let program = if tool == "gzip" || tool_available(tool) {
-                tool.to_owned()
-            } else {
-                find_sevenzip()
-                    .ok_or_else(|| format!("Install {tool} or 7z to decompress this file"))?
-            };
-            return Ok(UnpackCommand::Decompress {
-                program,
-                archive: archive_arg.to_owned(),
-                output: dest.join(stem),
-            });
+
+    fn extract(&self) -> io::Result<()> {
+        let meta = self.archive.metadata()?;
+        if !meta.is_file() {
+            return Err(io::Error::other("Archive must be a regular file"));
         }
+        let limit = meta
+            .len()
+            .saturating_mul(200)
+            .clamp(EXPANSION_FLOOR, MAX_BYTES);
+        let mut stage = Staged::new(limit)?;
+        match self.format {
+            Format::Tar => stage.tar(File::open(&self.archive)?)?,
+            Format::TarGz => stage.tar(flate2::read::MultiGzDecoder::new(File::open(
+                &self.archive,
+            )?))?,
+            Format::Zip => {
+                if let Err(error) = stage.zip(&self.archive) {
+                    if error.kind() != io::ErrorKind::Unsupported {
+                        return Err(error);
+                    }
+                    // Use libarchive for ZIP compression methods outside our native reader.
+                    stage = Staged::new(limit)?;
+                    self.read_container(&mut stage)?;
+                }
+            }
+            Format::TarXz | Format::TarBz2 => {
+                let tool = if matches!(self.format, Format::TarXz) {
+                    "xz"
+                } else {
+                    "bzip2"
+                };
+                if tool_available(tool) {
+                    with_stdout(decoder_command(tool, &self.archive), |data| stage.tar(data))?;
+                } else {
+                    self.read_container(&mut stage)?;
+                }
+            }
+            Format::Libarchive => self.read_container(&mut stage)?,
+            Format::Gz | Format::Bz2 | Format::Xz => {
+                let name = self
+                    .archive
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| crate::util::valid_filename(s))
+                    .ok_or_else(|| io::Error::other("Invalid output filename"))?;
+                if matches!(self.format, Format::Gz) {
+                    stage.file(
+                        name,
+                        None,
+                        0,
+                        flate2::read::MultiGzDecoder::new(File::open(&self.archive)?),
+                    )?;
+                } else {
+                    let tool = if matches!(self.format, Format::Xz) {
+                        "xz"
+                    } else {
+                        "bzip2"
+                    };
+                    let cmd = if tool_available(tool) {
+                        decoder_command(tool, &self.archive)
+                    } else {
+                        let program = crate::util::find_sevenzip().ok_or_else(|| {
+                            io::Error::other(format!(
+                                "Install {tool} or 7z to decompress this file"
+                            ))
+                        })?;
+                        let mut cmd = Command::new(program);
+                        cmd.args(["x", "-so", "--"]).arg(&self.archive);
+                        cmd
+                    };
+                    with_stdout(cmd, |data| stage.file(name, None, 0, data))?;
+                }
+            }
+        }
+        stage.publish(&self.destination)
     }
-    if [".rar", ".zip", ".7z"].iter().any(|s| name.ends_with(s)) {
-        let bin = find_sevenzip()
-            .ok_or("No suitable extractor found; install 7z or a format-specific extractor")?;
-        return direct(
-            &bin,
-            &["x", "-aos", &format!("-o{dest_arg}"), "--", archive_arg],
-        );
+
+    // Convert to a TAR stream on stdout. The decoder never receives the output
+    // directory, and its filenames go through the same validation as native TAR.
+    fn read_container(&self, stage: &mut Staged) -> io::Result<()> {
+        let mut archive_arg = std::ffi::OsString::from("@");
+        archive_arg.push(self.archive.canonicalize()?);
+        let mut cmd = Command::new(if cfg!(any(windows, target_os = "macos")) {
+            "tar"
+        } else {
+            "bsdtar"
+        });
+        cmd.args(["-cPf", "-", "--format", "gnutar", "--"])
+            .arg(archive_arg);
+        with_stdout(cmd, |data| stage.tar(data)).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                io::Error::other("Install bsdtar (libarchive-tools) to read this archive")
+            } else {
+                e
+            }
+        })
     }
-    Err(format!("unsupported archive format: {name}"))
 }
 
-const MAX_BYTES: u64 = 1024 * 1024 * 1024;
-const EXPANSION_FLOOR: u64 = 8 * 1024 * 1024;
-
-fn byte_budget(archive: &Path) -> io::Result<u64> {
-    let input = archive.metadata()?;
-    if !input.is_file() {
-        return Err(io::Error::other("Archive must be a regular file"));
-    }
-    Ok(input
-        .len()
-        .saturating_mul(200)
-        .clamp(EXPANSION_FLOOR, MAX_BYTES))
+fn tool_available(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
 }
 
-// Probe one byte beyond the allowance without writing that byte to disk.
-fn copy_limited(mut input: impl Read, mut output: impl Write, limit: u64) -> io::Result<u64> {
-    let bytes = io::copy(&mut input.by_ref().take(limit), &mut output)?;
-    if input.read(&mut [0])? != 0 {
-        return Err(io::Error::other("Archive exceeds the expanded byte limit"));
+fn decoder_command(tool: &str, archive: &Path) -> Command {
+    let mut cmd = Command::new(tool);
+    if tool == "xz" {
+        cmd.arg("--memlimit-decompress=128MiB");
     }
-    Ok(bytes)
+    cmd.args(["-dc", "--"]).arg(archive);
+    cmd
 }
 
 fn with_stdout<T>(
     mut cmd: Command,
-    read: impl FnOnce(&mut ChildStdout) -> io::Result<T>,
+    read: impl FnOnce(&mut std::process::ChildStdout) -> io::Result<T>,
 ) -> io::Result<T> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -161,33 +217,4 @@ fn with_stdout<T>(
         )));
     }
     Ok(value)
-}
-
-pub async fn decompress(program: String, archive: String, output: PathBuf) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || -> io::Result<()> {
-        let limit = byte_budget(Path::new(&archive))?;
-        let mut tmp = tempfile::NamedTempFile::new_in(
-            output
-                .parent()
-                .ok_or_else(|| io::Error::other("Missing output directory"))?,
-        )?;
-        if program == "gzip" {
-            let decoder = flate2::read::MultiGzDecoder::new(File::open(&archive)?);
-            copy_limited(decoder, &mut tmp, limit)?;
-        } else {
-            let mut cmd = Command::new(&program);
-            match program.as_str() {
-                "xz" => cmd.args(["--memlimit-decompress=128MiB", "-dc", "--", &archive]),
-                "bzip2" => cmd.args(["-dc", "--", &archive]),
-                _ => cmd.args(["x", "-so", "--", &archive]),
-            };
-            with_stdout(cmd, |stdout| copy_limited(stdout, &mut tmp, limit))?;
-        }
-        tmp.persist_noclobber(&output)
-            .map_err(|e| io::Error::other(format!("Cannot create {}: {e}", output.display())))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
 }

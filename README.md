@@ -44,6 +44,19 @@ cpt /left /right          # set both panes
 cpt --debug               # write log to cpt.log
 ```
 
+## Archive extraction
+
+cpTerm checks every member before creating output files. It extracts regular
+files and directories, merges existing directories, and preserves existing
+files. It rejects traversal paths, links and special files. RAR, 7z and less
+common ZIP codecs use the system's libarchive tar reader. On Linux, install
+`bsdtar` (the `libarchive-tools` package on Debian and Ubuntu) for those formats.
+
+An extraction can contain up to 10,000 entries, including implicit directories.
+Its expanded contents can total up to 200 times the archive's size, with an
+8 MiB minimum allowance and a 1 GiB maximum. cpTerm stages the contents in
+temporary storage and reports a limit error before writing to the destination.
+
 ## SSH
 
 SSH uses OpenSSH's `ssh-keygen` and your `~/.ssh/known_hosts`. For a new

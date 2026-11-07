@@ -2,7 +2,7 @@
 //!
 //! These tests exercise multi-step pipelines that span more than one module:
 //! Explorer state -> selected paths -> conflict resolution -> async FS ops, and
-//! archive resolution -> shell execution -> filesystem verification.
+//! archive resolution -> extraction -> filesystem verification.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use std::process::Command;
 
 use cpt::action::Action;
 use cpt::components::explorer::Explorer;
-use cpt::fs::archive::{UnpackCommand, resolve_unpack_command};
+use cpt::fs::archive::resolve_unpack_command;
 use cpt::fs::ops::{build_pairs, copy_entries, find_conflicts, move_entries, rename_conflicts};
 use tokio::sync::mpsc;
 
@@ -59,16 +59,6 @@ fn tool_available(tool: &str) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok()
-}
-
-fn run_unpack(cmd: &UnpackCommand) -> std::process::Output {
-    match cmd {
-        UnpackCommand::Decompress { .. } => panic!("expected multi-file archive"),
-        UnpackCommand::Direct { program, args } => Command::new(program)
-            .args(args)
-            .output()
-            .expect("direct command failed"),
-    }
 }
 
 // ── 1. End-to-end conflict resolution pipeline ──────────────
@@ -235,11 +225,7 @@ async fn explorer_selection_feeds_copy_pipeline_end_to_end() {
 
 // ── 4. Real tar archive round-trip ──────────────────────────
 
-/// Build a real tar archive on disk, ask `resolve_unpack_command` for the
-/// extraction command, run it, and verify the archive contents reappear at
-/// the destination. This catches regressions in shell quoting, argument
-/// ordering, and tool-specific flag choices that purely-resolution tests
-/// would miss.
+/// Read an archive produced by the system tar and check its extracted tree.
 #[tokio::test]
 async fn unpack_real_tar_archive_extracts_full_tree() {
     if !tool_available("tar") {
@@ -269,12 +255,7 @@ async fn unpack_real_tar_archive_extracts_full_tree() {
     fs::create_dir(&dest).unwrap();
 
     let cmd = resolve_unpack_command(&archive, &dest).expect("tar resolve must succeed");
-    let output = run_unpack(&cmd);
-    assert!(
-        output.status.success(),
-        "unpack failed: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    cmd.run().await.expect("archive extraction failed");
 
     assert_eq!(
         fs::read_to_string(dest.join("payload").join("hello.txt")).unwrap(),
@@ -290,22 +271,13 @@ async fn unpack_real_tar_archive_extracts_full_tree() {
 
 // ── 5. Real zip archive round-trip ──────────────────────────
 
-/// Same shape as the tar test but exercises the unzip / 7z branch and the
-/// `unzip ... -d <dest>` flag layout. Skipped if neither tool is available
-/// in the test environment.
+/// Read a ZIP produced by a system tool, including a quoted filename.
 #[tokio::test]
 async fn unpack_real_zip_archive_extracts_files() {
     if !cfg!(windows) && !tool_available("zip") {
         eprintln!("skipping: zip not available on PATH");
         return;
     }
-    let has_unzip = tool_available("unzip");
-    let has_7z = ["7z", "7za", "7zz"].iter().any(|t| tool_available(t));
-    if !cfg!(windows) && !has_unzip && !has_7z {
-        eprintln!("skipping: neither unzip nor 7z available");
-        return;
-    }
-
     let work = tempdir("zip_work");
     let payload_dir = work.join("payload");
     fs::create_dir(&payload_dir).unwrap();
@@ -335,12 +307,7 @@ async fn unpack_real_zip_archive_extracts_files() {
     fs::create_dir(&dest).unwrap();
 
     let cmd = resolve_unpack_command(&archive, &dest).expect("zip resolve must succeed");
-    let output = run_unpack(&cmd);
-    assert!(
-        output.status.success(),
-        "unpack failed: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    cmd.run().await.expect("archive extraction failed");
 
     assert_eq!(
         fs::read_to_string(dest.join("payload").join("doc.txt")).unwrap(),

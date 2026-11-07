@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use crate::action::Action;
 use crate::components::dialog::Dialog;
 use crate::fs::ops;
-use crate::task;
 
 use super::{App, InputMode, PendingOp};
 
@@ -269,44 +268,18 @@ impl App {
         );
         match crate::fs::archive::resolve_unpack_command(archive, dest) {
             Ok(unpack_cmd) => {
-                if let Err(e) = std::fs::create_dir_all(dest) {
-                    self.dialog = Some(Dialog::error(format!(
-                        "Cannot create extraction directory: {e}"
-                    )));
-                    self.input_mode = InputMode::Normal;
-                    return;
-                }
                 self.pre_extract_snapshot = Some((dest.to_path_buf(), snapshot));
                 let tx = self.task_tx.clone();
                 let label = unpack_cmd.display();
                 self.task = Some(crate::task::TaskState::new(&label));
                 self.input_mode = InputMode::TaskOutput;
-                match unpack_cmd {
-                    crate::fs::archive::UnpackCommand::Decompress {
-                        program,
-                        archive,
-                        output,
-                    } => {
-                        tokio::spawn(async move {
-                            let result =
-                                crate::fs::archive::decompress(program, archive, output).await;
-                            let action = match result {
-                                Ok(()) => Action::TaskComplete(0),
-                                Err(e) => Action::TaskError(e),
-                            };
-                            let _ = tx.send(action).await;
-                        });
-                    }
-                    crate::fs::archive::UnpackCommand::Direct { program, args } => {
-                        log::debug!(
-                            "unpack: spawning direct task: {} {:?} in cwd={}",
-                            program,
-                            args,
-                            cwd.display()
-                        );
-                        tokio::spawn(task::run_task_direct(program, args, cwd, tx));
-                    }
-                }
+                tokio::spawn(async move {
+                    let action = match unpack_cmd.run().await {
+                        Ok(()) => Action::TaskComplete(0),
+                        Err(e) => Action::TaskError(e),
+                    };
+                    let _ = tx.send(action).await;
+                });
             }
             Err(msg) => {
                 log::debug!("unpack: resolve error: {}", msg);
