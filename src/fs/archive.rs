@@ -96,13 +96,7 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<UnpackComma
         #[cfg(windows)]
         return Ok(UnpackCommand::Direct {
             program: "tar".to_string(),
-            args: vec![
-                "--force-local".to_string(),
-                "-xf".to_string(),
-                archive_str,
-                "-C".to_string(),
-                dest_str,
-            ],
+            args: vec!["-xf".to_string(), archive_str, "-C".to_string(), dest_str],
         });
         #[cfg(not(windows))]
         {
@@ -213,6 +207,7 @@ pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<UnpackComma
     }
 
     // ── Single compressed files (.gz / .bz2 / .xz not inside a tarball) ──────
+    #[cfg(not(windows))]
     let stem = archive
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())

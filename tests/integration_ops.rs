@@ -62,7 +62,6 @@ fn tool_available(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
 fn run_unpack(cmd: &UnpackCommand) -> std::process::Output {
     match cmd {
         UnpackCommand::Shell(s) => Command::new("sh")
@@ -246,7 +245,6 @@ async fn explorer_selection_feeds_copy_pipeline_end_to_end() {
 /// the destination. This catches regressions in shell quoting, argument
 /// ordering, and tool-specific flag choices that purely-resolution tests
 /// would miss.
-#[cfg(not(windows))]
 #[tokio::test]
 async fn unpack_real_tar_archive_extracts_full_tree() {
     if !tool_available("tar") {
