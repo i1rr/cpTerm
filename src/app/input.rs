@@ -17,7 +17,6 @@ impl App {
     }
 
     pub(super) fn map_key(&self, key: KeyEvent) -> Action {
-        log::debug!("key: mods={:?} code={:?}", key.modifiers, key.code);
         // Dialog intercepts first
         if self.dialog.is_some() {
             return match key.code {

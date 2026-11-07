@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use log::{Level, Log, Metadata, Record};
 const MAX_LOG_LINES: usize = 500;
 
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
-static BUFFER: Mutex<Vec<LogEntry>> = Mutex::new(Vec::new());
+static BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
 
 struct LogEntry {
     level: Level,
@@ -21,7 +22,8 @@ struct MemoryLogger;
 impl Log for MemoryLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         if DEBUG_MODE.load(Ordering::Relaxed) {
-            metadata.level() <= Level::Debug
+            metadata.level() <= Level::Warn
+                || (metadata.target().starts_with("cpt::") && metadata.level() <= Level::Debug)
         } else {
             metadata.level() <= Level::Warn
         }
@@ -39,7 +41,10 @@ impl Log for MemoryLogger {
             }
 
             if let Ok(mut buf) = BUFFER.lock() {
-                buf.push(LogEntry {
+                if buf.len() == MAX_LOG_LINES {
+                    buf.pop_front();
+                }
+                buf.push_back(LogEntry {
                     level: record.level(),
                     message,
                 });
@@ -134,7 +139,7 @@ pub fn dump() -> usize {
     entries.len()
 }
 
-fn write_to_file(path: &PathBuf, new_entries: &[LogEntry]) -> std::io::Result<()> {
+fn write_to_file(path: &PathBuf, new_entries: &VecDeque<LogEntry>) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

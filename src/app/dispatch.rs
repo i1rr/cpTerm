@@ -12,7 +12,6 @@ impl App {
         // Task stream actions are processed regardless of any modal state so that
         // background output keeps flowing while theme editor or dialogs are open.
         if let Action::TaskLine(ref line) = action {
-            log::debug!("task output: {}", line);
             if let Some(ref mut task) = self.task {
                 task.push_line(line.clone());
             }
@@ -51,7 +50,7 @@ impl App {
             return;
         }
         if let Action::TaskError(ref msg) = action {
-            log::debug!("task error: {}", msg);
+            log::debug!("task failed");
             if let Some(ref mut task) = self.task {
                 task.push_line(format!("error: {}", msg));
                 task.finish(-1);

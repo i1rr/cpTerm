@@ -70,7 +70,6 @@ pub(super) fn dirs_next_home() -> Option<PathBuf> {
 impl App {
     pub(super) fn do_command(&mut self, cmd: &str) {
         let cmd = cmd.trim();
-        log::debug!("do_command: {:?}", cmd);
         if cmd.is_empty() {
             self.input_mode = InputMode::Normal;
             return;
