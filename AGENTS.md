@@ -1,21 +1,25 @@
-# CLAUDE.md
+# cpTerm project instructions
 
-Guidance for Claude Code working in this repository.
+cpTerm is a dual-pane terminal file manager. Work autonomously: investigate,
+implement, test, commit and push routine fixes without waiting for confirmation.
+Ask only when a decision materially changes scope, risks user data, or needs
+credentials or access that you do not have.
 
-## cpt - dual-pane TUI file explorer
+## Workflow
 
-Total Commander style file manager. Single binary, no runtime dependencies.
-
-## Stack
-
-Rust edition 2024, Ratatui 0.30, ratatui-textarea 0.8, Crossterm 0.29, Tokio 1, tokio-util 0.7, confy 1.x, russh 0.58.
-
-## Commands
-
-- `cargo build` / `cargo run` / `cargo run -- <left-path> [right-path]`
-- `cargo run -- --debug` writes `cpt.log` to the confy config dir
-- `cargo test` (all) / `cargo test <name>` (single)
-- `cargo clippy` / `cargo fmt`
+- Check the current branch, working tree and upstream before editing. Fetch
+  origin and fast-forward when possible. Preserve unrelated user changes.
+- Make one small, independently useful change at a time. Validate it, stage
+  only its files, commit and push directly to master before starting the next
+  change. Verify the remote revision. Do not force push or rewrite history.
+- Use the configured human author. Do not add assistant credits, co-author
+  trailers, local tool settings, secrets or scratch files.
+- Use lowercase imperative commit subjects. Follow rustfmt and Clippy.
+- Run focused regressions for each fix. Before reporting a code change complete,
+  check cargo fmt --all -- --check, cargo clippy --locked --all-targets
+  --all-features -- -D warnings, and cargo test --locked. Report any gaps.
+- Check dependency changes against current advisories, commit Cargo.lock, and
+  exercise file operations in disposable directories, never against user data.
 
 ## Architecture
 
