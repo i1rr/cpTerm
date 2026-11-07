@@ -217,6 +217,19 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    #[test]
+    fn destructive_dialogs_only_accept_their_displayed_choices() {
+        let mut app = make_app();
+        app.dialog = Some(Dialog::confirm("Delete", "Delete these files?"));
+        assert!(matches!(app.map_key(key(KeyCode::Char('r'))), Action::Noop));
+        app.dialog = Some(Dialog::conflict("Copy", "Target exists"));
+        assert!(matches!(app.map_key(key(KeyCode::Enter)), Action::Noop));
+        assert!(matches!(
+            app.map_key(key(KeyCode::Char('o'))),
+            Action::ConflictOverwrite
+        ));
+    }
+
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }

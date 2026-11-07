@@ -18,15 +18,40 @@ impl App {
 
     pub(super) fn map_key(&self, key: KeyEvent) -> Action {
         // Dialog intercepts first
-        if self.dialog.is_some() {
+        if let Some(dialog) = &self.dialog {
+            use crate::components::dialog::DialogKind;
             return match key.code {
-                KeyCode::Enter => Action::ConfirmDialog,
+                KeyCode::Enter
+                    if matches!(
+                        dialog.kind,
+                        DialogKind::Confirm { .. } | DialogKind::CloseEditorConfirm { .. }
+                    ) =>
+                {
+                    Action::ConfirmDialog
+                }
+                KeyCode::Enter
+                    if matches!(dialog.kind, DialogKind::Error(_) | DialogKind::Info(_)) =>
+                {
+                    Action::DismissDialog
+                }
                 KeyCode::Esc => Action::DismissDialog,
                 KeyCode::Up => Action::DialogScrollUp,
                 KeyCode::Down => Action::DialogScrollDown,
-                KeyCode::Char('o') | KeyCode::Char('O') => Action::ConflictOverwrite,
-                KeyCode::Char('r') | KeyCode::Char('R') => Action::ConflictRename,
-                KeyCode::Char('d') | KeyCode::Char('D') => Action::DiscardAndCloseEditor,
+                KeyCode::Char('o') | KeyCode::Char('O')
+                    if matches!(dialog.kind, DialogKind::Conflict { .. }) =>
+                {
+                    Action::ConflictOverwrite
+                }
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if matches!(dialog.kind, DialogKind::Conflict { .. }) =>
+                {
+                    Action::ConflictRename
+                }
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if matches!(dialog.kind, DialogKind::CloseEditorConfirm { .. }) =>
+                {
+                    Action::DiscardAndCloseEditor
+                }
                 _ => Action::Noop,
             };
         }

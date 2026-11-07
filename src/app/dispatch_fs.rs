@@ -128,7 +128,8 @@ impl App {
     }
 
     pub(super) fn do_rename(&mut self, new_name: &str) {
-        if new_name.is_empty() {
+        if !crate::util::valid_filename(new_name) {
+            self.dialog = Some(Dialog::error("Enter a single valid filename"));
             return;
         }
         // Handle remote rename
@@ -173,6 +174,13 @@ impl App {
                 return;
             };
             let new_path = parent.join(new_name);
+            if new_path == old_path {
+                return;
+            }
+            if new_path.symlink_metadata().is_ok() {
+                self.dialog = Some(Dialog::error("Rename destination already exists"));
+                return;
+            }
             if let Err(e) = std::fs::rename(&old_path, &new_path) {
                 self.dialog = Some(Dialog::error(format!("Rename failed: {}", e)));
             }
@@ -183,7 +191,8 @@ impl App {
     }
 
     pub(super) fn do_mkdir(&mut self, name: &str) {
-        if name.is_empty() {
+        if !crate::util::valid_filename(name) {
+            self.dialog = Some(Dialog::error("Enter a single valid directory name"));
             return;
         }
         // Handle remote mkdir
@@ -226,14 +235,13 @@ impl App {
     }
 
     pub(super) fn do_create_file(&mut self, name: &str) {
-        if name.is_empty() {
+        if !crate::util::valid_filename(name) {
+            self.dialog = Some(Dialog::error("Enter a single valid filename"));
             return;
         }
         let dir = self.dual_pane.active_dir();
         let new_file = dir.join(name);
-        if new_file.exists() {
-            self.dialog = Some(Dialog::error(format!("Already exists: {}", name)));
-        } else if let Err(e) = std::fs::File::create(&new_file) {
+        if let Err(e) = std::fs::File::create_new(&new_file) {
             self.dialog = Some(Dialog::error(format!("Create file failed: {}", e)));
         }
         if let Some(e) = self.dual_pane.active_explorer_mut() {
@@ -516,6 +524,12 @@ impl App {
                             .unwrap_or_else(|| "extracted".to_string());
                         // Strip double extensions like .tar.gz
                         let stem = stem.strip_suffix(".tar").unwrap_or(&stem).to_string();
+                        if !crate::util::valid_filename(&stem) {
+                            self.dialog = Some(Dialog::error(
+                                "Choose a custom extraction directory for this archive",
+                            ));
+                            return true;
+                        }
                         let folder_dest = parent.join(&stem);
                         self.do_unpack(&archive, &folder_dest);
                     }

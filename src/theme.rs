@@ -377,6 +377,9 @@ impl Theme {
     }
 
     fn load_from_file(name: &str) -> Option<Self> {
+        if !crate::util::valid_filename(name) {
+            return None;
+        }
         let dir = Self::themes_dir()?;
         let path = dir.join(format!("{}.toml", name));
         let content = std::fs::read_to_string(&path).ok()?;
@@ -390,6 +393,9 @@ impl Theme {
     }
 
     pub fn save_to_file(&self, name: &str) -> Result<PathBuf, String> {
+        if !crate::util::valid_filename(name) {
+            return Err("Invalid theme name".into());
+        }
         let dir =
             Self::themes_dir().ok_or_else(|| "could not determine themes directory".to_string())?;
         std::fs::create_dir_all(&dir)
@@ -397,11 +403,19 @@ impl Theme {
         let path = dir.join(format!("{}.toml", name));
         let content = toml::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize theme: {}", e))?;
-        std::fs::write(&path, content).map_err(|e| format!("failed to write theme file: {}", e))?;
+        use std::io::Write;
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
+        tmp.write_all(content.as_bytes())
+            .map_err(|e| e.to_string())?;
+        tmp.persist(&path)
+            .map_err(|e| format!("failed to write theme file: {e}"))?;
         Ok(path)
     }
 
     pub fn delete_file(name: &str) -> Result<(), String> {
+        if !crate::util::valid_filename(name) {
+            return Err("Invalid theme name".into());
+        }
         let dir =
             Self::themes_dir().ok_or_else(|| "could not determine themes directory".to_string())?;
         let path = dir.join(format!("{}.toml", name));
@@ -419,6 +433,8 @@ mod tests {
 
     #[test]
     fn custom_theme_round_trips_in_isolated_storage() {
+        assert!(Theme::muted().save_to_file("../escaped").is_err());
+        assert!(Theme::delete_file("../escaped").is_err());
         let path = Theme::muted().save_to_file("example").unwrap();
         assert_eq!(Theme::by_name("example").dir_fg, Theme::muted().dir_fg);
         Theme::delete_file("example").unwrap();
