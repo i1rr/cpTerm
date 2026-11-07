@@ -1399,8 +1399,8 @@ fn resolve_unpack_zip_uses_unzip_or_7z() {
             let cmd = unpack.display();
             #[cfg(windows)]
             assert!(
-                cmd.contains("Expand-Archive"),
-                "Windows ZIP should use Expand-Archive: {}",
+                cmd.starts_with("tar "),
+                "Windows ZIP should use bsdtar: {}",
                 cmd
             );
             #[cfg(not(windows))]
@@ -1448,22 +1448,6 @@ fn resolve_unpack_unknown_format_returns_err() {
     let result = resolve_unpack_command(&PathBuf::from("/src/file.docx"), &PathBuf::from("/dest"));
     let err = result.expect_err("unsupported format should be Err");
     assert!(err.contains("unsupported"), "{}", err);
-}
-
-#[cfg(not(windows))]
-#[test]
-fn shell_quote_wraps_and_escapes_single_quotes() {
-    use cpt::fs::archive::shell_quote;
-    let plain = shell_quote(&PathBuf::from("/path/to/my file.txt"));
-    assert!(plain.starts_with('\'') && plain.ends_with('\''));
-    assert!(plain.contains("my file.txt"));
-
-    let tricky = shell_quote(&PathBuf::from("/path/it's here/file.txt"));
-    assert!(
-        tricky.contains("'\\''"),
-        "single quote should be escaped: {}",
-        tricky
-    );
 }
 
 // ── resolve_editor / resolve_pager (env-driven) ─────────────
@@ -1541,9 +1525,7 @@ fn resolve_pager_prefers_pager_then_builtin() {
 // Compile-time smoke test that UnpackCommand variants are still constructable;
 // without this the `Direct` variant can be silently removed by refactors.
 #[test]
-fn unpack_command_display_renders_both_variants() {
-    let shell = UnpackCommand::Shell("tar -xf foo".to_string());
-    assert_eq!(shell.display(), "tar -xf foo");
+fn unpack_command_display_quotes_spaces() {
     let direct = UnpackCommand::Direct {
         program: "tar".to_string(),
         args: vec!["-xf".to_string(), "with space".to_string()],

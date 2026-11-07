@@ -50,6 +50,7 @@ impl App {
             return;
         }
         if let Action::TaskError(ref msg) = action {
+            self.pre_extract_snapshot = None;
             log::debug!("task failed");
             if let Some(ref mut task) = self.task {
                 task.push_line(format!("error: {}", msg));

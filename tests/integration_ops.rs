@@ -58,17 +58,12 @@ fn tool_available(tool: &str) -> bool {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok()
 }
 
 fn run_unpack(cmd: &UnpackCommand) -> std::process::Output {
     match cmd {
-        UnpackCommand::Shell(s) => Command::new("sh")
-            .arg("-c")
-            .arg(s)
-            .output()
-            .expect("sh -c failed"),
+        UnpackCommand::Decompress { .. } => panic!("expected multi-file archive"),
         UnpackCommand::Direct { program, args } => Command::new(program)
             .args(args)
             .output()
@@ -298,16 +293,15 @@ async fn unpack_real_tar_archive_extracts_full_tree() {
 /// Same shape as the tar test but exercises the unzip / 7z branch and the
 /// `unzip ... -d <dest>` flag layout. Skipped if neither tool is available
 /// in the test environment.
-#[cfg(not(windows))]
 #[tokio::test]
 async fn unpack_real_zip_archive_extracts_files() {
-    if !tool_available("zip") {
+    if !cfg!(windows) && !tool_available("zip") {
         eprintln!("skipping: zip not available on PATH");
         return;
     }
     let has_unzip = tool_available("unzip");
     let has_7z = ["7z", "7za", "7zz"].iter().any(|t| tool_available(t));
-    if !has_unzip && !has_7z {
+    if !cfg!(windows) && !has_unzip && !has_7z {
         eprintln!("skipping: neither unzip nor 7z available");
         return;
     }
@@ -318,9 +312,17 @@ async fn unpack_real_zip_archive_extracts_files() {
     fs::write(payload_dir.join("doc.txt"), "zipped doc").unwrap();
     fs::write(payload_dir.join("notes.md"), "# notes").unwrap();
 
-    let archive = work.join("bundle.zip");
-    let status = Command::new("zip")
-        .arg("-r")
+    let archive = work.join("a ‘quote’ & spaces.zip");
+    let mut pack = if cfg!(windows) {
+        let mut cmd = Command::new("tar");
+        cmd.arg("-acf");
+        cmd
+    } else {
+        let mut cmd = Command::new("zip");
+        cmd.arg("-r");
+        cmd
+    };
+    let status = pack
         .arg(&archive)
         .arg("payload")
         .current_dir(&work)

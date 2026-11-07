@@ -1,62 +1,46 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::util::find_sevenzip;
 
-// ── Shell quoting ─────────────────────────────────────────────────────────────
-
-/// Wrap a path in shell quotes so it can be safely embedded in a command string
-/// passed to `sh -c` (Unix) or `cmd /C` (Windows).
-pub fn shell_quote(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    #[cfg(windows)]
-    {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    }
-    #[cfg(not(windows))]
-    {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
-}
-
-// ── Unpack command ───────────────────────────────────────────────────────────
-
-/// A resolved unpack command: either a shell string (Unix) or a direct
-/// program + args list (Windows, to bypass cmd /C quoting issues).
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum UnpackCommand {
-    /// A shell command string to pass to `sh -c` or `cmd /C`.
-    Shell(String),
-    /// A program and its arguments - spawned directly, no shell.
-    Direct { program: String, args: Vec<String> },
+    Direct {
+        program: String,
+        args: Vec<String>,
+    },
+    Decompress {
+        program: String,
+        archive: String,
+        output: PathBuf,
+    },
 }
 
 impl UnpackCommand {
-    /// Human-readable display string for the task window title.
     pub fn display(&self) -> String {
         match self {
-            UnpackCommand::Shell(s) => s.clone(),
-            UnpackCommand::Direct { program, args } => {
-                format!(
-                    "{} {}",
-                    program,
-                    args.iter()
-                        .map(|a| if a.contains(' ') {
-                            format!("\"{}\"", a)
+            Self::Direct { program, args } => format!(
+                "{} {}",
+                program,
+                args.iter()
+                    .map(|s| {
+                        if s.contains(' ') {
+                            format!("{s:?}")
                         } else {
-                            a.clone()
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                )
-            }
+                            s.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+            Self::Decompress {
+                program,
+                archive,
+                output,
+            } => format!("{program} {archive} -> {}", output.display()),
         }
     }
 }
 
-// ── Tool probing ──────────────────────────────────────────────────────────────
-
-/// Return true if `tool` can be found and spawned on the current PATH.
 fn tool_available(tool: &str) -> bool {
     std::process::Command::new(tool)
         .arg("--version")
@@ -66,251 +50,81 @@ fn tool_available(tool: &str) -> bool {
         .is_ok()
 }
 
-// ── Command resolution ────────────────────────────────────────────────────────
-
-/// Build the command to extract `archive` into `dest`.
-///
-/// On Unix, returns a shell string for `sh -c`.
-/// On Windows, returns a direct program + args to avoid cmd /C quoting issues.
-///
-/// Returns `Err` with a human-readable message when no suitable tool is found.
 pub fn resolve_unpack_command(archive: &Path, dest: &Path) -> Result<UnpackCommand, String> {
     let name = archive
         .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-
-    let archive_str = archive.to_string_lossy().to_string();
-    let dest_str = dest.to_string_lossy().to_string();
-    // Suppress unused warnings on Unix (these are used in #[cfg(windows)] blocks).
-    let _ = (&archive_str, &dest_str);
-
-    // ── TAR variants ─────────────────────────────────────────────────────────
-    if name.ends_with(".tar")
-        || name.ends_with(".tar.gz")
-        || name.ends_with(".tgz")
-        || name.ends_with(".tar.bz2")
-        || name.ends_with(".tbz2")
-        || name.ends_with(".tar.xz")
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid archive filename")?
+        .to_lowercase();
+    let archive_arg = archive.to_str().ok_or("Archive path is not UTF-8")?;
+    let dest_arg = dest.to_str().ok_or("Destination path is not UTF-8")?;
+    let direct = |program: &str, args: &[&str]| {
+        Ok(UnpackCommand::Direct {
+            program: program.to_owned(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+        })
+    };
+    if [".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz"]
+        .iter()
+        .any(|s| name.ends_with(s))
+        || (cfg!(windows) && name.ends_with(".zip"))
     {
-        #[cfg(windows)]
-        return Ok(UnpackCommand::Direct {
-            program: "tar".to_string(),
-            args: vec!["-xf".to_string(), archive_str, "-C".to_string(), dest_str],
-        });
-        #[cfg(not(windows))]
-        {
-            let aq = shell_quote(archive);
-            let dq = shell_quote(dest);
-            return Ok(UnpackCommand::Shell(format!("tar -xf {} -C {}", aq, dq)));
-        }
+        // Windows ships bsdtar, which reads ZIP and takes literal path arguments.
+        return direct("tar", &["-k", "-xf", archive_arg, "-C", dest_arg]);
     }
-
-    // ── ZIP ───────────────────────────────────────────────────────────────────
-    if name.ends_with(".zip") {
-        #[cfg(windows)]
-        {
-            // Use PowerShell Expand-Archive which handles Windows paths natively.
-            return Ok(UnpackCommand::Direct {
-                program: "powershell".to_string(),
-                args: vec![
-                    "-NoProfile".to_string(),
-                    "-Command".to_string(),
-                    format!(
-                        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                        archive_str.replace('\'', "''"),
-                        dest_str.replace('\'', "''"),
-                    ),
-                ],
-            });
-        }
-        #[cfg(not(windows))]
-        {
-            let aq = shell_quote(archive);
-            let dq = shell_quote(dest);
-            if tool_available("unzip") {
-                return Ok(UnpackCommand::Shell(format!("unzip {} -d {}", aq, dq)));
-            }
-            if let Some(bin) = find_sevenzip() {
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-            return Err(
-                "unzip not found - install it with your package manager (e.g. apt install unzip)"
-                    .to_string(),
-            );
-        }
+    if name.ends_with(".zip") && tool_available("unzip") {
+        return direct("unzip", &["-n", archive_arg, "-d", dest_arg]);
     }
-
-    // ── 7Z ────────────────────────────────────────────────────────────────────
-    if name.ends_with(".7z") {
-        if let Some(bin) = find_sevenzip() {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: bin,
-                args: vec![
-                    "x".to_string(),
-                    archive_str,
-                    format!("-o{}", dest_str),
-                    "-y".to_string(),
-                ],
-            });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-        }
-        return Err(
-            "7z not found on PATH - install 7-Zip (p7zip-full on Debian/Ubuntu, p7zip on macOS via Homebrew)"
-                .to_string(),
+    if name.ends_with(".rar") && tool_available("unrar") {
+        return direct(
+            "unrar",
+            &["x", "-o-", &format!("-op{dest_arg}"), "--", archive_arg],
         );
     }
-
-    // ── RAR ───────────────────────────────────────────────────────────────────
-    if name.ends_with(".rar") {
-        if tool_available("unrar") {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: "unrar".to_string(),
-                args: vec!["x".to_string(), archive_str, format!("-op{}", dest_str)],
+    for (suffix, tool) in [(".gz", "gzip"), (".bz2", "bzip2"), (".xz", "xz")] {
+        if name.ends_with(suffix) && tool_available(tool) {
+            let stem = archive
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| crate::util::valid_filename(s))
+                .ok_or("Invalid output filename")?;
+            return Ok(UnpackCommand::Decompress {
+                program: tool.to_owned(),
+                archive: archive_arg.to_owned(),
+                output: dest.join(stem),
             });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("unrar x {} -op{}", aq, dq)));
-            }
         }
-        if let Some(bin) = find_sevenzip() {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: bin,
-                args: vec![
-                    "x".to_string(),
-                    archive_str,
-                    format!("-o{}", dest_str),
-                    "-y".to_string(),
-                ],
-            });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-        }
-        return Err(
-            "unrar not found - install it with your package manager (e.g. apt install unrar)"
-                .to_string(),
+    }
+    if [".rar", ".zip", ".7z", ".gz", ".bz2", ".xz"]
+        .iter()
+        .any(|s| name.ends_with(s))
+    {
+        let bin = find_sevenzip()
+            .ok_or("No suitable extractor found; install 7z or a format-specific extractor")?;
+        return direct(
+            &bin,
+            &["x", "-aos", &format!("-o{dest_arg}"), "--", archive_arg],
         );
     }
+    Err(format!("unsupported archive format: {name}"))
+}
 
-    // ── Single compressed files (.gz / .bz2 / .xz not inside a tarball) ──────
-    #[cfg(not(windows))]
-    let stem = archive
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "output".to_string());
-
-    if name.ends_with(".gz") {
-        #[cfg(not(windows))]
-        {
-            if tool_available("gzip") {
-                let aq = shell_quote(archive);
-                let dest_file_q = shell_quote(&dest.join(&stem));
-                return Ok(UnpackCommand::Shell(format!(
-                    "gzip -dc {} > {}",
-                    aq, dest_file_q
-                )));
-            }
-        }
-        if let Some(bin) = find_sevenzip() {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: bin,
-                args: vec![
-                    "x".to_string(),
-                    archive_str,
-                    format!("-o{}", dest_str),
-                    "-y".to_string(),
-                ],
-            });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-        }
-        return Err("gzip not found".to_string());
+/// A failed decoder must not leave a partial file or follow an existing output symlink.
+pub async fn decompress(program: String, archive: String, output: PathBuf) -> Result<(), String> {
+    let tmp = tempfile::NamedTempFile::new_in(output.parent().ok_or("Missing output directory")?)
+        .map_err(|e| e.to_string())?;
+    let status = tokio::process::Command::new(program)
+        .args(["-dc", "--", &archive])
+        .stdout(tmp.reopen().map_err(|e| e.to_string())?)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("Decoder failed: {status}"));
     }
-
-    if name.ends_with(".bz2") {
-        #[cfg(not(windows))]
-        {
-            if tool_available("bzip2") {
-                let aq = shell_quote(archive);
-                let dest_file_q = shell_quote(&dest.join(&stem));
-                return Ok(UnpackCommand::Shell(format!(
-                    "bzip2 -dc {} > {}",
-                    aq, dest_file_q
-                )));
-            }
-        }
-        if let Some(bin) = find_sevenzip() {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: bin,
-                args: vec![
-                    "x".to_string(),
-                    archive_str,
-                    format!("-o{}", dest_str),
-                    "-y".to_string(),
-                ],
-            });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-        }
-        return Err("bzip2 not found".to_string());
-    }
-
-    if name.ends_with(".xz") {
-        #[cfg(not(windows))]
-        {
-            if tool_available("xz") {
-                let aq = shell_quote(archive);
-                let dest_file_q = shell_quote(&dest.join(&stem));
-                return Ok(UnpackCommand::Shell(format!(
-                    "xz -dc {} > {}",
-                    aq, dest_file_q
-                )));
-            }
-        }
-        if let Some(bin) = find_sevenzip() {
-            #[cfg(windows)]
-            return Ok(UnpackCommand::Direct {
-                program: bin,
-                args: vec![
-                    "x".to_string(),
-                    archive_str,
-                    format!("-o{}", dest_str),
-                    "-y".to_string(),
-                ],
-            });
-            #[cfg(not(windows))]
-            {
-                let aq = shell_quote(archive);
-                let dq = shell_quote(dest);
-                return Ok(UnpackCommand::Shell(format!("{} x {} -o{}", bin, aq, dq)));
-            }
-        }
-        return Err("xz not found".to_string());
-    }
-
-    Err(format!("unsupported archive format: {}", name))
+    tmp.persist_noclobber(&output)
+        .map_err(|e| format!("Cannot create {}: {e}", output.display()))?;
+    Ok(())
 }

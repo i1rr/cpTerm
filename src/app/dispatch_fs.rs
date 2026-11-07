@@ -250,9 +250,14 @@ impl App {
     }
 
     pub(super) fn do_unpack(&mut self, archive: &Path, dest: &Path) {
+        if self.task.as_ref().is_some_and(|t| t.running) {
+            self.input_mode = InputMode::TaskOutput;
+            return;
+        }
+        let dest = self.dual_pane.active_dir().join(dest);
+        let dest = dest.as_path();
         // Snapshot the destination directory before extraction for new-file highlighting
         let snapshot = self.dual_pane.snapshot_dir(dest);
-        self.pre_extract_snapshot = Some((dest.to_path_buf(), snapshot));
 
         let cwd = self.dual_pane.active_dir();
         log::debug!(
@@ -264,15 +269,33 @@ impl App {
         );
         match crate::fs::archive::resolve_unpack_command(archive, dest) {
             Ok(unpack_cmd) => {
-                log::debug!("unpack: resolved command: {:?}", unpack_cmd);
+                if let Err(e) = std::fs::create_dir_all(dest) {
+                    self.dialog = Some(Dialog::error(format!(
+                        "Cannot create extraction directory: {e}"
+                    )));
+                    self.input_mode = InputMode::Normal;
+                    return;
+                }
+                self.pre_extract_snapshot = Some((dest.to_path_buf(), snapshot));
                 let tx = self.action_tx.clone();
                 let label = unpack_cmd.display();
                 self.task = Some(crate::task::TaskState::new(&label));
                 self.input_mode = InputMode::TaskOutput;
                 match unpack_cmd {
-                    crate::fs::archive::UnpackCommand::Shell(cmd) => {
-                        log::debug!("unpack: spawning shell task in cwd={}", cwd.display());
-                        tokio::spawn(task::run_task(cmd, cwd, tx));
+                    crate::fs::archive::UnpackCommand::Decompress {
+                        program,
+                        archive,
+                        output,
+                    } => {
+                        tokio::spawn(async move {
+                            let result =
+                                crate::fs::archive::decompress(program, archive, output).await;
+                            let action = match result {
+                                Ok(()) => Action::TaskComplete(0),
+                                Err(e) => Action::TaskError(e),
+                            };
+                            let _ = tx.send(action);
+                        });
                     }
                     crate::fs::archive::UnpackCommand::Direct { program, args } => {
                         log::debug!(
