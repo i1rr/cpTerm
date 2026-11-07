@@ -22,7 +22,7 @@ Single native binary. Some features use system tools.
 - Drives / mounts panel (Alt+F1, Alt+F2, Ctrl+\\) for Windows drive letters and Unix mount points
 - 256-color theme editor (Ctrl+T) with live preview
 - Embedded text editor (Enter on a file): undo/redo, search, copy/paste
-- Archive unpack and pack: `.zip`, `.tar.*`, `.7z`, `.rar`, `.gz`, `.bz2`, `.xz`
+- Archive extraction: `.zip`, `.tar.*`, `.7z`, `.rar`, `.gz`, `.bz2`, `.xz`
 - SSH/SFTP remote browsing (`ssh user@host`)
 - Async task runner with live output window
 - Session restore on launch
@@ -32,7 +32,7 @@ Single native binary. Some features use system tools.
 Requires Rust stable (edition 2024) and a 256-color terminal.
 
 ```sh
-cargo build --release
+cargo build --release --locked
 ```
 
 ## Usage
@@ -62,7 +62,7 @@ are read-only and limited to 64 KiB; download larger files to view them locally.
 | `F1` | Help |
 | `F2` | Rename |
 | `F3` | View in `$PAGER` |
-| `F4` | New file |
+| `F4` | New file or directory |
 | `F5` | Copy to other pane |
 | `F6` | Move to other pane |
 | `F7` | New directory |
@@ -81,7 +81,7 @@ are read-only and limited to 64 KiB; download larger files to view them locally.
 | `Ctrl+Q` | Quit |
 
 Type any printable character in normal mode to open an inline command line.
-`cd <path>` navigates the active pane; anything else runs through the system shell.
+`cd <path>` navigates the active pane. Other commands run through the system shell in local panes.
 
 ## Configuration
 
@@ -89,16 +89,16 @@ Files are managed by [confy] and stored per platform:
 
 | Platform | Path |
 |----------|------|
-| Linux | `~/.config/rs.cpt/` |
+| Linux | `~/.config/cpt/ (or $XDG_CONFIG_HOME/cpt/)` |
 | macOS | `~/Library/Application Support/rs.cpt/` |
-| Windows | `%APPDATA%\rs.cpt\` |
+| Windows | `%APPDATA%\cpt\config\` |
 
 | File | Contents |
 |------|----------|
 | `cpt.toml` | Last directories, active pane, theme |
 | `bookmarks.toml` | Saved bookmarks |
 | `themes/<name>.toml` | Custom themes (26 color fields) |
-| `cpt.log` | Debug log (only with `--debug`) |
+| `cpt.log` | Session warnings and errors; `--debug` also records diagnostics |
 
 ## License
 
