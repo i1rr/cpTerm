@@ -81,6 +81,34 @@ fn tool_available(tool: &str) -> bool {
         .is_ok()
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn move_across_filesystems_copies_the_tree_then_removes_its_source() {
+    use std::os::unix::fs::MetadataExt;
+    let src = tempfile::tempdir().unwrap();
+    let Ok(dest) = tempfile::tempdir_in("/dev/shm") else {
+        return;
+    };
+    if src.path().metadata().unwrap().dev() == dest.path().metadata().unwrap().dev() {
+        return;
+    }
+    let tree = src.path().join("tree");
+    fs::create_dir_all(tree.join("nested")).unwrap();
+    fs::write(tree.join("nested/data"), b"original").unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    move_entries(vec![(tree.clone(), dest.path().join("moved"))], tx).await;
+    assert!(
+        drain(&mut rx)
+            .iter()
+            .any(|a| matches!(a, Action::OperationComplete(_)))
+    );
+    assert!(!tree.exists());
+    assert_eq!(
+        fs::read(dest.path().join("moved/nested/data")).unwrap(),
+        b"original"
+    );
+}
+
 // ── 1. End-to-end conflict resolution pipeline ──────────────
 
 /// build_pairs -> find_conflicts -> rename_conflicts -> copy_entries

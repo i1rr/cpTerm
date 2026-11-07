@@ -5,6 +5,8 @@ use std::{fs, io};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
+mod move_cleanup;
+use move_cleanup::MoveCleanup;
 
 /// Build (source, target) pairs for a copy/move into dest_dir.
 pub fn build_pairs(sources: &[PathBuf], dest_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
@@ -116,7 +118,12 @@ fn copy_blocking(
     let mut done = 0u64;
 
     for (src, target) in &pairs {
-        let result = copy_tree(src, target, &|path| overwrites.contains(path));
+        let result = copy_tree(
+            src,
+            target,
+            &|path| overwrites.contains(path),
+            &mut |_, _| Ok(()),
+        );
 
         match result {
             Ok(()) => {
@@ -157,12 +164,15 @@ fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Actio
             if e.kind() != io::ErrorKind::CrossesDevices {
                 return Err(e);
             }
-            copy_tree(src, target, &|_| true)?;
-            if fs::symlink_metadata(src)?.is_dir() {
-                fs::remove_dir_all(src)
-            } else {
-                fs::remove_file(src)
-            }
+            MoveCleanup::copy(src, target)?.finish().map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "copied to {}, source cleanup incomplete: {e}",
+                        target.display()
+                    ),
+                )
+            })
         });
 
         match result {
@@ -235,7 +245,12 @@ fn linked(meta: &fs::Metadata) -> bool {
     meta.is_symlink()
 }
 
-fn copy_tree(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io::Result<()> {
+fn copy_tree(
+    src: &Path,
+    dest: &Path,
+    can_replace: &dyn Fn(&Path) -> bool,
+    inspect_source: &mut dyn FnMut(&Path, bool) -> io::Result<()>,
+) -> io::Result<()> {
     let source = fs::canonicalize(src)?;
     let parent = fs::canonicalize(
         dest.parent()
@@ -250,14 +265,20 @@ fn copy_tree(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io
             "cannot copy an item onto or inside itself",
         ));
     }
-    copy_item(src, dest, can_replace)
+    copy_item(src, dest, can_replace, inspect_source)
 }
 
-fn copy_item(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io::Result<()> {
+fn copy_item(
+    src: &Path,
+    dest: &Path,
+    can_replace: &dyn Fn(&Path) -> bool,
+    inspect_source: &mut dyn FnMut(&Path, bool) -> io::Result<()>,
+) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if linked(&meta) || dest.symlink_metadata().is_ok_and(|m| linked(&m)) {
         return Err(io::Error::other("refusing to follow a link during copy"));
     }
+    inspect_source(src, meta.is_dir())?;
     if meta.is_dir() {
         match fs::create_dir(dest) {
             Err(e)
@@ -268,7 +289,12 @@ fn copy_item(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io
         }
         for entry in fs::read_dir(src)? {
             let entry = entry?;
-            copy_item(&entry.path(), &dest.join(entry.file_name()), can_replace)?;
+            copy_item(
+                &entry.path(),
+                &dest.join(entry.file_name()),
+                can_replace,
+                inspect_source,
+            )?;
         }
     } else if meta.is_file() {
         // Publish only complete copies. Replacing a hard link does not truncate its source.
