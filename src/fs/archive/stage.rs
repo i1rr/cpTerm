@@ -13,7 +13,7 @@ use cap_std::{
 use super::MAX_ENTRIES;
 
 enum Item {
-    Directory,
+    Directory(u32),
     File { offset: u64, size: u64, mode: u32 },
 }
 
@@ -78,8 +78,10 @@ impl Staged {
             .filter(|p| !p.as_os_str().is_empty())
         {
             if !matches!(
-                self.items.entry(parent.into()).or_insert(Item::Directory),
-                Item::Directory
+                self.items
+                    .entry(parent.into())
+                    .or_insert(Item::Directory(0o777)),
+                Item::Directory(_)
             ) {
                 return Err(io::Error::other("Archive file conflicts with a directory"));
             }
@@ -88,6 +90,14 @@ impl Staged {
             return Err(io::Error::other("Archive exceeds the entry limit"));
         }
         Ok(path)
+    }
+
+    fn directory(&mut self, name: &str, mode: u32) -> io::Result<()> {
+        let path = self.record_path(name, true)?;
+        if !path.as_os_str().is_empty() {
+            self.items.insert(path, Item::Directory(mode));
+        }
+        Ok(())
     }
 
     pub fn file(
@@ -148,9 +158,14 @@ impl Staged {
                 if entry.size() != 0 {
                     return Err(io::Error::other("Unexpected data in archive directory"));
                 }
-                self.record_path(&name, true)?;
+                self.directory(&name, entry.unix_mode().unwrap_or(0o777))?;
             } else {
-                self.file(&name, Some(entry.size()), mode, entry)?;
+                self.file(
+                    &name,
+                    Some(entry.size()),
+                    entry.unix_mode().unwrap_or(0o666),
+                    entry,
+                )?;
             }
         }
         Ok(())
@@ -172,7 +187,7 @@ impl Staged {
             let name =
                 String::from_utf8(entry.path_bytes().into_owned()).map_err(io::Error::other)?;
             if kind.is_dir() && entry.size() == 0 {
-                self.record_path(&name, true)?;
+                self.directory(&name, entry.header().mode()?)?;
             } else if kind.is_file() {
                 allowance.set(entry.size());
                 let mode = entry.header().mode()?;
@@ -204,35 +219,81 @@ impl Staged {
         // cannot leave earlier entries visible. Reopen without following links
         // during publication as well, including if another process changes them.
         for (path, item) in &self.items {
-            if let Some(parent) = parent_dir(&root, path, false)? {
+            if let Some(parent) = parent_dir(&root, path)? {
                 check_existing(&parent, path.file_name().expect("validated path"), item)?;
             }
         }
-        for (path, item) in &self.items {
-            let parent = parent_dir(&root, path, true)?.expect("missing directories are created");
-            let name = path.file_name().expect("validated path");
-            if check_existing(&parent, name, item)? {
-                continue;
+        publish_directory(
+            &root,
+            Path::new(""),
+            &mut self.items.iter().peekable(),
+            &mut self.data,
+        )
+    }
+}
+
+// Parents sort before their children. Keep one open directory per level so a
+// read-only directory can receive its final mode after its contents are written.
+fn publish_directory(
+    dir: &Dir,
+    prefix: &Path,
+    entries: &mut std::iter::Peekable<std::collections::btree_map::Iter<'_, PathBuf, Item>>,
+    data: &mut File,
+) -> io::Result<()> {
+    while let Some((path, item)) = entries.next_if(|(path, _)| path.parent() == Some(prefix)) {
+        let name = path.file_name().expect("validated path");
+        let exists = check_existing(dir, name, item)?;
+        match *item {
+            Item::Directory(mode) => {
+                if !exists {
+                    create_directory(dir, name, mode)?;
+                }
+                let child = dir.open_dir_nofollow(name)?;
+                let result = publish_directory(&child, path, entries, data);
+                #[cfg(unix)]
+                if !exists && mode & 0o700 != 0o700 {
+                    use cap_std::fs::PermissionsExt;
+                    let mut perm = child.dir_metadata()?.permissions();
+                    perm.set_mode(perm.mode() & mode & 0o777);
+                    child.set_permissions(".", perm)?;
+                }
+                result?;
             }
-            match *item {
-                Item::Directory => parent.create_dir(name)?,
-                Item::File { offset, size, mode } => {
-                    self.data.seek(SeekFrom::Start(offset))?;
-                    let mut file = parent
-                        .open_with(name, OpenOptions::new().write(true).create_new(true))?
-                        .into_std();
-                    let result = io::copy(&mut (&mut self.data).take(size), &mut file)
-                        .and_then(|_| set_executable(&file, mode));
-                    if let Err(e) = result {
-                        drop(file);
-                        let _ = parent.remove_file(name);
-                        return Err(e);
-                    }
+            Item::File { offset, size, mode } if !exists => {
+                data.seek(SeekFrom::Start(offset))?;
+                let mut out = dir.open_with(name, &file_options(mode))?;
+                if let Err(e) = io::copy(&mut data.take(size), &mut out) {
+                    drop(out);
+                    let _ = dir.remove_file(name);
+                    return Err(e);
                 }
             }
+            Item::File { .. } => {}
         }
-        Ok(())
     }
+    Ok(())
+}
+
+fn create_directory(dir: &Dir, name: &std::ffi::OsStr, _mode: u32) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::DirBuilderExt;
+        let mut builder = cap_std::fs::DirBuilder::new();
+        dir.create_dir_with(name, builder.mode((_mode & 0o777) | 0o700))
+    }
+    #[cfg(not(unix))]
+    dir.create_dir(name)
+}
+
+fn file_options(_mode: u32) -> OpenOptions {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        opts.mode(_mode & 0o777);
+    }
+    opts
 }
 
 struct TarReader<'a, R> {
@@ -275,16 +336,12 @@ fn open_destination(path: &Path) -> io::Result<Dir> {
     }
 }
 
-fn parent_dir(root: &Dir, path: &Path, create: bool) -> io::Result<Option<Dir>> {
+fn parent_dir(root: &Dir, path: &Path) -> io::Result<Option<Dir>> {
     let mut dir = root.try_clone()?;
     for part in path.parent().expect("validated path").iter() {
         dir = match dir.open_dir_nofollow(part) {
             Ok(dir) => dir,
-            Err(e) if e.kind() == io::ErrorKind::NotFound && !create => return Ok(None),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                dir.create_dir(part)?;
-                dir.open_dir_nofollow(part)?
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         }
     }
@@ -298,7 +355,7 @@ fn check_existing(dir: &Dir, name: &std::ffi::OsStr, item: &Item) -> io::Result<
         Err(e) => return Err(e),
     };
     match item {
-        Item::Directory if meta.is_dir() => {
+        Item::Directory(_) if meta.is_dir() => {
             dir.open_dir_nofollow(name)?;
         }
         Item::File { .. } if meta.is_file() => {}
@@ -309,17 +366,4 @@ fn check_existing(dir: &Dir, name: &std::ffi::OsStr, item: &Item) -> io::Result<
         }
     }
     Ok(true)
-}
-
-#[cfg(unix)]
-fn set_executable(file: &File, mode: u32) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perm = file.metadata()?.permissions();
-    perm.set_mode(perm.mode() | (mode & 0o111));
-    file.set_permissions(perm)
-}
-
-#[cfg(not(unix))]
-fn set_executable(_: &File, _: u32) -> io::Result<()> {
-    Ok(())
 }

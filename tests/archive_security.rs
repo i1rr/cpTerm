@@ -227,6 +227,38 @@ async fn normal_archive_merges_directories_and_preserves_existing_files() {
     assert_eq!(fs::read(f.dest.join("sub/new")).unwrap(), [0]);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn private_archive_files_and_directories_keep_their_access_restrictions() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new("tar");
+    let mut tar = tar::Builder::new(fs::File::create(&f.archive).unwrap());
+    for (path, kind, mode, data) in [
+        (
+            "private/key",
+            tar::EntryType::Regular,
+            0o4600,
+            b"x".as_slice(),
+        ),
+        ("private", tar::EntryType::Directory, 0o500, b"".as_slice()),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_mode(mode);
+        header.set_size(data.len() as u64);
+        tar.append_data(&mut header, path, data).unwrap();
+    }
+    tar.finish().unwrap();
+    unpack(&f.archive, &f.dest).await.unwrap();
+    let dir = f.dest.join("private");
+    assert_eq!(dir.metadata().unwrap().permissions().mode() & 0o7777, 0o500);
+    assert_eq!(
+        dir.join("key").metadata().unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
 #[tokio::test]
 async fn seven_zip_decoder_feeds_the_same_path_checks() {
     let tool = if cfg!(any(windows, target_os = "macos")) {

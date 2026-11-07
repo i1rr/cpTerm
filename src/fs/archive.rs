@@ -126,7 +126,7 @@ impl UnpackCommand {
                     stage.file(
                         name,
                         None,
-                        0,
+                        0o600,
                         flate2::read::MultiGzDecoder::new(File::open(&self.archive)?),
                     )?;
                 } else {
@@ -147,7 +147,7 @@ impl UnpackCommand {
                         cmd.args(["x", "-so", "--"]).arg(&self.archive);
                         cmd
                     };
-                    with_stdout(cmd, |data| stage.file(name, None, 0, data))?;
+                    with_stdout(cmd, |data| stage.file(name, None, 0o600, data))?;
                 }
             }
         }
