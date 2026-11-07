@@ -332,17 +332,14 @@ impl App {
                         if selected.is_empty() {
                             return true;
                         }
-                        let paths: Vec<String> = selected
-                            .iter()
-                            .filter(|e| !e.is_dir)
-                            .map(|e| e.remote_path.clone())
-                            .collect();
-                        if paths.is_empty() {
+                        if selected.iter().any(|entry| entry.is_dir) {
                             self.dialog = Some(Dialog::error(
-                                "Cannot download directories (not yet supported)",
+                                "Select files only; directory downloads are not supported",
                             ));
                             return true;
                         }
+                        let paths: Vec<String> =
+                            selected.iter().map(|e| e.remote_path.clone()).collect();
                         let dest = self.dual_pane.inactive_dir();
                         let session = remote.session.clone();
                         let count = paths.len();
@@ -360,6 +357,10 @@ impl App {
                     // Upload from local to remote
                     let sources = self.get_operation_sources();
                     if sources.is_empty() {
+                        return true;
+                    }
+                    if sources.iter().any(|path| !path.is_file()) {
+                        self.dialog = Some(Dialog::error("Select regular files only for upload"));
                         return true;
                     }
                     if let Some(remote) = self.dual_pane.inactive_remote() {

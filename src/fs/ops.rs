@@ -64,6 +64,13 @@ pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
 
 /// Copy a list of (source, target) pairs.
 pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+    let errors = tx.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || copy_blocking(pairs, tx)).await {
+        let _ = errors.send(Action::OperationError(format!("copy worker failed: {e}")));
+    }
+}
+
+fn copy_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
@@ -94,6 +101,13 @@ pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSen
 
 /// Move a list of (source, target) pairs.
 pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+    let errors = tx.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || move_blocking(pairs, tx)).await {
+        let _ = errors.send(Action::OperationError(format!("move worker failed: {e}")));
+    }
+}
+
+fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
@@ -131,6 +145,13 @@ pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSen
 
 /// Delete a list of files/dirs.
 pub async fn delete_entries(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Action>) {
+    let errors = tx.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || delete_blocking(sources, tx)).await {
+        let _ = errors.send(Action::OperationError(format!("delete worker failed: {e}")));
+    }
+}
+
+fn delete_blocking(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Action>) {
     let total = sources.len() as u64;
     let mut done = 0u64;
 

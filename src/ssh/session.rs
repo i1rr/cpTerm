@@ -348,6 +348,9 @@ impl SshSession {
         use tokio::io::AsyncWriteExt;
 
         use russh_sftp::protocol::OpenFlags;
+        if !local_path.is_file() {
+            return Err("Upload source is not a regular file".into());
+        }
         let mut source = tokio::fs::File::open(local_path)
             .await
             .map_err(|e| format!("Local read failed: {e}"))?;
