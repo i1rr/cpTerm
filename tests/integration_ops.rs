@@ -32,6 +32,26 @@ fn drain<T>(rx: &mut mpsc::UnboundedReceiver<T>) -> Vec<T> {
     out
 }
 
+#[tokio::test]
+async fn overlapping_copies_preserve_source_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    fs::write(&source, b"keep me").unwrap();
+    let alias = dir.path().join("alias");
+    fs::hard_link(&source, &alias).unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    copy_entries(vec![(source.clone(), source.clone())], tx.clone()).await;
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    copy_entries(vec![(source.clone(), alias.clone())], tx.clone()).await;
+    assert_eq!(fs::read(&source).unwrap(), b"keep me");
+    assert_eq!(fs::read(&alias).unwrap(), b"keep me");
+    drain(&mut rx);
+    let nested = dir.path().join("nested");
+    copy_entries(vec![(dir.path().to_owned(), nested.clone())], tx).await;
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    assert!(!nested.exists());
+}
+
 fn tool_available(tool: &str) -> bool {
     Command::new(tool)
         .arg("--version")

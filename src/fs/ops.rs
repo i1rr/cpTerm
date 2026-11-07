@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use tokio::sync::mpsc;
 
@@ -20,13 +21,17 @@ pub fn find_conflicts(pairs: &[(PathBuf, PathBuf)]) -> Vec<usize> {
     pairs
         .iter()
         .enumerate()
-        .filter(|(_, (_, target))| target.exists())
+        .filter(|(_, (_, target))| target.symlink_metadata().is_ok())
         .map(|(i, _)| i)
         .collect()
 }
 
 /// Generate a unique target name by appending (1), (2), etc.
 pub fn unique_target(target: &Path) -> PathBuf {
+    unique_target_except(target, &std::collections::HashSet::new())
+}
+
+fn unique_target_except(target: &Path, reserved: &std::collections::HashSet<PathBuf>) -> PathBuf {
     let stem = target
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -39,7 +44,7 @@ pub fn unique_target(target: &Path) -> PathBuf {
 
     for i in 1.. {
         let candidate = parent.join(format!("{} ({}){}", stem, i, ext));
-        if !candidate.exists() {
+        if !reserved.contains(&candidate) && candidate.symlink_metadata().is_err() {
             return candidate;
         }
     }
@@ -48,9 +53,11 @@ pub fn unique_target(target: &Path) -> PathBuf {
 
 /// Rename conflicting targets to unique names.
 pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
+    let mut reserved = pairs.iter().map(|(_, t)| t.clone()).collect();
     for (_, target) in pairs.iter_mut() {
-        if target.exists() {
-            *target = unique_target(target);
+        if target.symlink_metadata().is_ok() {
+            *target = unique_target_except(target, &reserved);
+            reserved.insert(target.clone());
         }
     }
 }
@@ -61,11 +68,7 @@ pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSen
     let mut done = 0u64;
 
     for (src, target) in &pairs {
-        let result = if src.is_dir() {
-            copy_dir_recursive(src, target)
-        } else {
-            std::fs::copy(src, target).map(|_| ())
-        };
+        let result = copy_tree(src, target);
 
         match result {
             Ok(()) => {
@@ -95,14 +98,15 @@ pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSen
     let mut done = 0u64;
 
     for (src, target) in &pairs {
-        let result = std::fs::rename(src, target).or_else(|_| {
-            // rename fails across drives, fall back to copy+delete
-            if src.is_dir() {
-                copy_dir_recursive(src, target)?;
-                std::fs::remove_dir_all(src)
+        let result = fs::rename(src, target).or_else(|e| {
+            if e.kind() != io::ErrorKind::CrossesDevices {
+                return Err(e);
+            }
+            copy_tree(src, target)?;
+            if fs::symlink_metadata(src)?.is_dir() {
+                fs::remove_dir_all(src)
             } else {
-                std::fs::copy(src, target)?;
-                std::fs::remove_file(src)
+                fs::remove_file(src)
             }
         });
 
@@ -159,16 +163,58 @@ pub async fn delete_entries(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Act
     )));
 }
 
-fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let target = dest.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_recursive(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), target)?;
+fn linked(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
+    }
+    #[cfg(not(windows))]
+    meta.is_symlink()
+}
+
+fn copy_tree(src: &Path, dest: &Path) -> io::Result<()> {
+    let source = fs::canonicalize(src)?;
+    let parent = fs::canonicalize(
+        dest.parent()
+            .ok_or_else(|| io::Error::other("missing destination parent"))?,
+    )?;
+    let target = parent.join(
+        dest.file_name()
+            .ok_or_else(|| io::Error::other("invalid destination"))?,
+    );
+    if target.starts_with(&source) || fs::canonicalize(dest).is_ok_and(|p| p.starts_with(&source)) {
+        return Err(io::Error::other(
+            "cannot copy an item onto or inside itself",
+        ));
+    }
+    copy_item(src, &target)
+}
+
+fn copy_item(src: &Path, dest: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(src)?;
+    if linked(&meta) || dest.symlink_metadata().is_ok_and(|m| linked(&m)) {
+        return Err(io::Error::other("refusing to follow a link during copy"));
+    }
+    if meta.is_dir() {
+        match fs::create_dir(dest) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && dest.is_dir() => {}
+            result => result?,
         }
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            copy_item(&entry.path(), &dest.join(entry.file_name()))?;
+        }
+    } else if meta.is_file() {
+        // Publish only complete copies. Replacing a hard link does not truncate its source.
+        let tmp = tempfile::NamedTempFile::new_in(
+            dest.parent()
+                .ok_or_else(|| io::Error::other("missing destination parent"))?,
+        )?;
+        fs::copy(src, tmp.path())?;
+        tmp.persist(dest)?;
+    } else {
+        return Err(io::Error::other("cannot copy a special file"));
     }
     Ok(())
 }
