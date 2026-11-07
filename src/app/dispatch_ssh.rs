@@ -82,6 +82,27 @@ impl App {
             })
     }
 
+    fn request_remote_listing(
+        &self,
+        session: Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
+        path: String,
+        refresh_only: bool,
+    ) {
+        let tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            let result = session.lock().await.list_dir(&path).await;
+            let action = match result {
+                Ok(entries) => Action::RemoteListing {
+                    session,
+                    path,
+                    entries,
+                    refresh_only,
+                },
+                Err(e) => Action::RemoteListingFailed(session, e),
+            };
+            let _ = tx.send(action);
+        });
+    }
     pub(super) fn do_command(&mut self, cmd: &str) {
         let cmd = cmd.trim();
         if cmd.is_empty() {
@@ -467,33 +488,19 @@ impl App {
             }
             Action::RemoteNavigate(path) => {
                 if let Some(remote) = self.dual_pane.active_remote() {
-                    let session = remote.session.clone();
-                    let tx = self.action_tx.clone();
-                    let path_clone = path.clone();
-                    tokio::spawn(async move {
-                        let sess = session.lock().await;
-                        match sess.list_dir(&path_clone).await {
-                            Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing {
-                                    session: session.clone(),
-                                    path: path_clone,
-                                    entries,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
-                            }
-                        }
-                    });
+                    self.request_remote_listing(remote.session.clone(), path, false);
                 }
                 true
             }
             Action::RemoteListing {
                 session,
                 path,
+                refresh_only,
                 entries,
             } => {
-                if let Some(remote) = self.remote_for_session(&session) {
+                if let Some(remote) = self.remote_for_session(&session)
+                    && (!refresh_only || remote.current_path == path)
+                {
                     remote.update_listing(path, entries);
                 }
                 true
@@ -524,7 +531,7 @@ impl App {
                                 });
                             }
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteOpError(format!(
+                                let _ = tx.send(Action::Error(format!(
                                     "Download for view failed: {}",
                                     e
                                 )));
@@ -544,28 +551,16 @@ impl App {
                 }
                 true
             }
-            Action::RemoteOpComplete(msg) => {
-                self.dialog = Some(Dialog::info(msg.clone()));
-                // Refresh remote listing
-                if let Some(remote) = self.dual_pane.active_remote() {
-                    let session = remote.session.clone();
-                    let current_path = remote.current_path.clone();
-                    let tx = self.action_tx.clone();
-                    tokio::spawn(async move {
-                        let sess = session.lock().await;
-                        match sess.list_dir(&current_path).await {
-                            Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing {
-                                    session: session.clone(),
-                                    path: current_path,
-                                    entries,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
-                            }
-                        }
-                    });
+            Action::RemoteOpFinished { session, result } => {
+                self.dialog = Some(match result {
+                    Ok(msg) => Dialog::info(msg),
+                    Err(msg) => Dialog::error(msg),
+                });
+                if let Some(path) = self
+                    .remote_for_session(&session)
+                    .map(|r| r.current_path.clone())
+                {
+                    self.request_remote_listing(session, path, true);
                 }
                 true
             }
@@ -584,31 +579,6 @@ impl App {
                     state.fields[3] = last.path;
                 }
                 self.input_mode = InputMode::SshConnect(state);
-                true
-            }
-            Action::RemoteOpError(msg) => {
-                self.dialog = Some(Dialog::error(msg.clone()));
-                // Refresh remote listing
-                if let Some(remote) = self.dual_pane.active_remote() {
-                    let session = remote.session.clone();
-                    let current_path = remote.current_path.clone();
-                    let tx = self.action_tx.clone();
-                    tokio::spawn(async move {
-                        let sess = session.lock().await;
-                        match sess.list_dir(&current_path).await {
-                            Ok(entries) => {
-                                let _ = tx.send(Action::RemoteListing {
-                                    session: session.clone(),
-                                    path: current_path,
-                                    entries,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
-                            }
-                        }
-                    });
-                }
                 true
             }
             _ => false,

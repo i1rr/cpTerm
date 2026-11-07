@@ -264,6 +264,56 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
+    #[tokio::test]
+    #[ignore = "requires the isolated OpenSSH fixture"]
+    async fn upload_refreshes_inactive_remote_pane_without_changing_focus() {
+        use crate::components::{dual_pane::PaneContent, remote_explorer::RemoteExplorer};
+        let fixture = PathBuf::from(std::env::var_os("CPT_SSH_FIXTURE").unwrap());
+        assert_eq!(std::env::home_dir().unwrap(), fixture.join("home"));
+        let user = std::env::var("CPT_SSH_USER").unwrap();
+        let session = crate::ssh::SshSession::connect("127.0.0.1", 22222, &user, None)
+            .await
+            .unwrap();
+        let source = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join("pane-upload"), b"upload").unwrap();
+        let target = tempfile::tempdir_in(fixture.join("remote")).unwrap();
+        let mut app = make_app();
+        app.dual_pane = DualPane::new(source.path().into(), target.path().into(), PaneSide::Left);
+        app.dual_pane.right = PaneContent::Remote(RemoteExplorer::new(
+            Arc::new(tokio::sync::Mutex::new(session)),
+            target.path().to_str().unwrap().to_owned(),
+            vec![],
+            "server:".into(),
+        ));
+        app.dual_pane.active_explorer_mut().unwrap().cursor = 1;
+        app.dispatch(Action::CopySelected);
+        assert!(matches!(
+            app.pending_op,
+            Some(PendingOp::RemoteUpload { .. })
+        ));
+        app.dispatch(Action::ConfirmDialog);
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while !app
+                .dual_pane
+                .inactive_remote()
+                .unwrap()
+                .entries
+                .iter()
+                .any(|e| e.name == "pane-upload")
+            {
+                let action = app.action_rx.recv().await.unwrap();
+                app.dispatch(action);
+                assert_eq!(app.dual_pane.active, PaneSide::Left);
+            }
+        })
+        .await
+        .expect("upload never appeared in the inactive pane");
+        assert_eq!(
+            std::fs::read(target.path().join("pane-upload")).unwrap(),
+            b"upload"
+        );
+    }
+
     // ── Normal mode key mapping ───────────────────────────────
 
     #[test]

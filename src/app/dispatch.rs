@@ -61,6 +61,15 @@ impl App {
             return;
         }
 
+        if matches!(
+            &action,
+            Action::RemoteOpFinished { .. }
+                | Action::RemoteListing { .. }
+                | Action::RemoteListingFailed(..)
+        ) {
+            self.dispatch_ssh(action);
+            return;
+        }
         if self.bookmark_panel.is_some() {
             let mut bp = self.bookmark_panel.take().unwrap();
             let (handled, keep) = self.dispatch_bookmark_panel(&mut bp, action.clone());

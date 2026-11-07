@@ -160,6 +160,7 @@ pub enum Action {
     RemoteListing {
         session: Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
         path: String,
+        refresh_only: bool,
         entries: Vec<crate::ssh::session::RemoteEntry>,
     },
     RemoteListingFailed(Arc<tokio::sync::Mutex<crate::ssh::SshSession>>, String),
@@ -170,6 +171,8 @@ pub enum Action {
     },
     RemoteDownload,
     RemoteUpload,
-    RemoteOpComplete(String),
-    RemoteOpError(String),
+    RemoteOpFinished {
+        session: Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
+        result: Result<String, String>,
+    },
 }

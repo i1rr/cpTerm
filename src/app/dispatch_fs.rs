@@ -38,14 +38,15 @@ impl App {
                             errors.push(e);
                         }
                     }
-                    if errors.is_empty() {
-                        let _ = tx.send(Action::RemoteOpComplete(format!(
-                            "Deleted {} item(s)",
-                            total
-                        )));
+                    let result = if errors.is_empty() {
+                        Ok(format!("Deleted {total} item(s)"))
                     } else {
-                        let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
-                    }
+                        Err(errors.join("; "))
+                    };
+                    let _ = tx.send(Action::RemoteOpFinished {
+                        session: session.clone(),
+                        result,
+                    });
                 });
             }
             PendingOp::RemoteDownload {
@@ -74,7 +75,7 @@ impl App {
                             total
                         )));
                     } else {
-                        let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
+                        let _ = tx.send(Action::OperationError(errors.join("; ")));
                     }
                 });
             }
@@ -100,14 +101,15 @@ impl App {
                             errors.push(e);
                         }
                     }
-                    if errors.is_empty() {
-                        let _ = tx.send(Action::RemoteOpComplete(format!(
-                            "Uploaded {} item(s)",
-                            total
-                        )));
+                    let result = if errors.is_empty() {
+                        Ok(format!("Uploaded {total} item(s)"))
                     } else {
-                        let _ = tx.send(Action::RemoteOpError(errors.join("; ")));
-                    }
+                        Err(errors.join("; "))
+                    };
+                    let _ = tx.send(Action::RemoteOpFinished {
+                        session: session.clone(),
+                        result,
+                    });
                 });
             }
         }
@@ -147,17 +149,15 @@ impl App {
             let tx = self.action_tx.clone();
             tokio::spawn(async move {
                 let sess = session.lock().await;
-                match sess.rename(&old_remote_path, &new_remote_path).await {
-                    Ok(()) => {
-                        let _ = tx.send(Action::RemoteOpComplete(format!(
-                            "Renamed to {}",
-                            new_name_owned
-                        )));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Action::RemoteOpError(format!("Rename failed: {}", e)));
-                    }
-                }
+                let result = sess
+                    .rename(&old_remote_path, &new_remote_path)
+                    .await
+                    .map(|()| format!("Renamed to {new_name_owned}"))
+                    .map_err(|e| format!("Rename failed: {e}"));
+                let _ = tx.send(Action::RemoteOpFinished {
+                    session: session.clone(),
+                    result,
+                });
             });
             return;
         }
@@ -207,17 +207,15 @@ impl App {
             let tx = self.action_tx.clone();
             tokio::spawn(async move {
                 let sess = session.lock().await;
-                match sess.mkdir(&new_path).await {
-                    Ok(()) => {
-                        let _ = tx.send(Action::RemoteOpComplete(format!(
-                            "Created directory {}",
-                            name_owned
-                        )));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Action::RemoteOpError(format!("Mkdir failed: {}", e)));
-                    }
-                }
+                let result = sess
+                    .mkdir(&new_path)
+                    .await
+                    .map(|()| format!("Created directory {name_owned}"))
+                    .map_err(|e| format!("Mkdir failed: {e}"));
+                let _ = tx.send(Action::RemoteOpFinished {
+                    session: session.clone(),
+                    result,
+                });
             });
             return;
         }
