@@ -70,124 +70,93 @@ impl TaskState {
     }
 }
 
-/// Spawn a shell command, streaming every line to `tx` as `Action::TaskLine`.
-/// Sends `Action::TaskComplete(code)` when the process exits, or
-/// `Action::TaskError(msg)` if the process cannot be started.
-pub async fn run_task(cmd: String, cwd: PathBuf, tx: mpsc::UnboundedSender<Action>) {
+/// Stream bounded chunks; a newline-free or non-UTF-8 stream must not exhaust
+/// memory or stop us from draining a child's pipe. The bounded channel applies
+/// backpressure when the terminal redraws more slowly than the child writes.
+async fn stream_output(
+    input: impl tokio::io::AsyncRead + Unpin,
+    tx: &mpsc::Sender<Action>,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncReadExt;
+    let mut reader = tokio::io::BufReader::new(input);
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        if (&mut reader)
+            .take(4096)
+            .read_until(b'\n', &mut bytes)
+            .await?
+            == 0
+        {
+            return Ok(());
+        }
+        let line = String::from_utf8_lossy(&bytes)
+            .trim_end_matches(['\r', '\n'])
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\t')
+            .collect();
+        if tx.send(Action::TaskLine(line)).await.is_err() {
+            return Ok(());
+        }
+    }
+}
+
+pub async fn run_task(cmd: String, cwd: PathBuf, tx: mpsc::Sender<Action>) {
     let (shell, flag) = if cfg!(windows) {
         ("cmd", "/C")
     } else {
         ("sh", "-c")
     };
-
-    let mut child = match tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(&cmd)
-        .current_dir(&cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = tx.send(Action::TaskError(format!(
-                "failed to start '{}': {}",
-                cmd, e
-            )));
-            return;
-        }
-    };
-
-    let stdout = child.stdout.take().expect("stdout piped");
-    let stderr = child.stderr.take().expect("stderr piped");
-
-    let tx_out = tx.clone();
-    let stdout_task = tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tx_out.send(Action::TaskLine(line)).is_err() {
-                break;
-            }
-        }
-    });
-
-    let tx_err = tx.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tx_err.send(Action::TaskLine(line)).is_err() {
-                break;
-            }
-        }
-    });
-
-    let _ = tokio::join!(stdout_task, stderr_task);
-    let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-    let _ = tx.send(Action::TaskComplete(exit_code));
+    run_task_direct(shell.into(), vec![flag.into(), cmd], cwd, tx).await;
 }
 
-/// Spawn a program with explicit arguments (no shell interpolation).
-/// This avoids quoting issues with `cmd /C` on Windows.
 pub async fn run_task_direct(
     program: String,
     args: Vec<String>,
     cwd: PathBuf,
-    tx: mpsc::UnboundedSender<Action>,
+    tx: mpsc::Sender<Action>,
 ) {
-    let label = format!(
-        "{} {}",
-        program,
-        args.iter()
-            .map(|a| if a.contains(' ') {
-                format!("\"{}\"", a)
-            } else {
-                a.clone()
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let mut child = match tokio::process::Command::new(&program)
-        .args(&args)
-        .current_dir(&cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = tx.send(Action::TaskError(format!(
-                "failed to start '{}': {}",
-                label, e
-            )));
-            return;
+    let result = async {
+        let mut child = tokio::process::Command::new(&program)
+            .args(args)
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        tokio::try_join!(stream_output(stdout, &tx), stream_output(stderr, &tx))?;
+        Ok::<_, std::io::Error>(child.wait().await?.code().unwrap_or(-1))
+    };
+    let action = tokio::select! {
+        _ = tx.closed() => return,
+        result = result => match result {
+            Ok(code) => Action::TaskComplete(code),
+            Err(e) => Action::TaskError(format!("{program}: {e}")),
         }
     };
+    let _ = tx.send(action).await;
+}
 
-    let stdout = child.stdout.take().expect("stdout piped");
-    let stderr = child.stderr.take().expect("stderr piped");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let tx_out = tx.clone();
-    let stdout_task = tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tx_out.send(Action::TaskLine(line)).is_err() {
-                break;
-            }
+    #[tokio::test]
+    async fn drains_long_and_binary_output_through_a_slow_receiver() {
+        let mut bytes = vec![b'x'; 100_000];
+        bytes.extend_from_slice(b"\xff\nend");
+        let (tx, mut rx) = mpsc::channel(1);
+        let writer =
+            tokio::spawn(async move { stream_output(bytes.as_slice(), &tx).await.unwrap() });
+        let mut text = String::new();
+        while let Some(Action::TaskLine(line)) = rx.recv().await {
+            assert!(line.len() <= 4100);
+            text.push_str(&line);
         }
-    });
-
-    let tx_err = tx.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tx_err.send(Action::TaskLine(line)).is_err() {
-                break;
-            }
-        }
-    });
-
-    let _ = tokio::join!(stdout_task, stderr_task);
-    let exit_code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
-    let _ = tx.send(Action::TaskComplete(exit_code));
+        writer.await.unwrap();
+        assert_eq!(text, format!("{}�end", "x".repeat(100_000)));
+    }
 }

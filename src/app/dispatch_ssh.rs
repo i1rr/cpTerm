@@ -217,7 +217,7 @@ impl App {
         let cwd = self.dual_pane.active_dir();
         self.task = Some(crate::task::TaskState::new(cmd));
         self.input_mode = InputMode::TaskOutput;
-        let tx = self.action_tx.clone();
+        let tx = self.task_tx.clone();
         tokio::spawn(task::run_task(cmd.to_string(), cwd, tx));
     }
 

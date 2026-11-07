@@ -277,7 +277,7 @@ impl App {
                     return;
                 }
                 self.pre_extract_snapshot = Some((dest.to_path_buf(), snapshot));
-                let tx = self.action_tx.clone();
+                let tx = self.task_tx.clone();
                 let label = unpack_cmd.display();
                 self.task = Some(crate::task::TaskState::new(&label));
                 self.input_mode = InputMode::TaskOutput;
@@ -294,7 +294,7 @@ impl App {
                                 Ok(()) => Action::TaskComplete(0),
                                 Err(e) => Action::TaskError(e),
                             };
-                            let _ = tx.send(action);
+                            let _ = tx.send(action).await;
                         });
                     }
                     crate::fs::archive::UnpackCommand::Direct { program, args } => {

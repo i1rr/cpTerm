@@ -1287,13 +1287,13 @@ fn task_state_finish_and_exit_summary() {
 
 #[tokio::test]
 async fn run_task_streams_stdout_and_signals_complete() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(16);
     let cwd = std::env::current_dir().unwrap();
     run_task("echo hello_world".to_string(), cwd, tx).await;
 
     let mut lines = Vec::new();
     let mut exit_code = None;
-    for action in drain(&mut rx) {
+    for action in std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>() {
         match action {
             Action::TaskLine(line) => lines.push(line),
             Action::TaskComplete(code) => exit_code = Some(code),
@@ -1310,7 +1310,7 @@ async fn run_task_streams_stdout_and_signals_complete() {
 
 #[tokio::test]
 async fn run_task_streams_stderr() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(16);
     let cwd = std::env::current_dir().unwrap();
     #[cfg(windows)]
     let cmd = "echo stderr_test 1>&2".to_string();
@@ -1318,7 +1318,8 @@ async fn run_task_streams_stderr() {
     let cmd = "echo stderr_test >&2".to_string();
     run_task(cmd, cwd, tx).await;
 
-    let lines: Vec<String> = drain(&mut rx)
+    let lines: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .collect::<Vec<_>>()
         .into_iter()
         .filter_map(|a| {
             if let Action::TaskLine(l) = a {
@@ -1337,23 +1338,27 @@ async fn run_task_streams_stderr() {
 
 #[tokio::test]
 async fn run_task_reports_nonzero_exit_or_error_for_bad_cwd() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(16);
     let cwd = std::env::current_dir().unwrap();
     run_task("exit 1".to_string(), cwd, tx).await;
-    let exit = drain(&mut rx).into_iter().find_map(|a| match a {
-        Action::TaskComplete(c) => Some(c),
-        _ => None,
-    });
+    let exit = std::iter::from_fn(|| rx.try_recv().ok())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .find_map(|a| match a {
+            Action::TaskComplete(c) => Some(c),
+            _ => None,
+        });
     assert_eq!(exit, Some(1));
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(16);
     run_task(
         "echo hi".to_string(),
         PathBuf::from("/nonexistent_cwd_cpt_xyz"),
         tx,
     )
     .await;
-    let signaled = drain(&mut rx)
+    let signaled = std::iter::from_fn(|| rx.try_recv().ok())
+        .collect::<Vec<_>>()
         .into_iter()
         .any(|a| matches!(a, Action::TaskError(_) | Action::TaskComplete(_)));
     assert!(signaled, "must signal something for bad cwd");

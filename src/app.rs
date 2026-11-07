@@ -49,6 +49,8 @@ pub struct App {
     pub task: Option<TaskState>,
     action_tx: mpsc::UnboundedSender<Action>,
     action_rx: mpsc::UnboundedReceiver<Action>,
+    task_tx: mpsc::Sender<Action>,
+    task_rx: mpsc::Receiver<Action>,
     pending_op: Option<PendingOp>,
     /// Paths that should be highlighted as "new" after the current operation completes.
     pending_new_files: Vec<PathBuf>,
@@ -71,6 +73,7 @@ impl App {
         theme_name: String,
     ) -> Self {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (task_tx, task_rx) = mpsc::channel(64);
         let theme = Theme::by_name(&theme_name);
         let bookmarks = BookmarkList::load();
         let startup_dialog = if bookmarks.load_failed() {
@@ -96,6 +99,8 @@ impl App {
             task: None,
             action_tx,
             action_rx,
+            task_tx,
+            task_rx,
             pending_op: None,
             pending_new_files: Vec::new(),
             pre_extract_snapshot: None,
@@ -121,6 +126,7 @@ impl App {
                         return Err(std::io::Error::other("Terminal input disconnected").into());
                     }
                 }
+                Some(action) = self.task_rx.recv() => self.dispatch(action),
                 action = self.action_rx.recv() => {
                     if let Some(action) = action {
                         self.dispatch(action);
@@ -193,6 +199,7 @@ mod tests {
     fn make_app() -> App {
         let dir = std::env::current_dir().unwrap();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
+        let (task_tx, task_rx) = mpsc::channel(64);
         App {
             dual_pane: DualPane::new(dir.clone(), dir, PaneSide::Left),
             input_mode: InputMode::Normal,
@@ -207,6 +214,8 @@ mod tests {
             task: None,
             action_tx,
             action_rx,
+            task_tx,
+            task_rx,
             pending_op: None,
             pending_new_files: Vec::new(),
             pre_extract_snapshot: None,
