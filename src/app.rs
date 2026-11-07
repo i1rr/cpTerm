@@ -106,7 +106,7 @@ impl App {
     }
 
     pub async fn run(&mut self) -> color_eyre::Result<()> {
-        let mut terminal = tui::init()?;
+        let (mut terminal, _restore) = tui::init()?;
         let mut events = EventHandler::new(std::time::Duration::from_millis(250));
 
         loop {
@@ -117,6 +117,8 @@ impl App {
                     if let Some(event) = event {
                         let action = self.map_event(event);
                         self.dispatch(action);
+                    } else {
+                        return Err(std::io::Error::other("Terminal input disconnected").into());
                     }
                 }
                 action = self.action_rx.recv() => {
@@ -127,6 +129,7 @@ impl App {
             }
 
             if let Some(path) = self.pending_view_file.take() {
+                events.stop(); // Give the external pager exclusive access to keyboard input.
                 if let Err(e) = tui::suspend() {
                     self.dialog = Some(crate::components::dialog::Dialog::error(format!(
                         "Failed to suspend TUI: {}",
@@ -142,6 +145,7 @@ impl App {
                         self.dialog = Some(crate::components::dialog::Dialog::error(msg));
                     }
                 }
+                events = EventHandler::new(std::time::Duration::from_millis(250));
             }
 
             if self.should_quit {
@@ -150,7 +154,6 @@ impl App {
             }
         }
 
-        tui::restore()?;
         Ok(())
     }
 

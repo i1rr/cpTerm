@@ -8,24 +8,31 @@ use ratatui::{Terminal, prelude::CrosstermBackend};
 
 pub type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 
-pub fn init() -> io::Result<Tui> {
+/// Restore the terminal on early return or unwinding, including partial setup.
+pub struct RestoreGuard;
+impl Drop for RestoreGuard {
+    fn drop(&mut self) {
+        let _ = restore();
+    }
+}
+
+pub fn init() -> io::Result<(Tui, RestoreGuard)> {
     enable_raw_mode()?;
+    let guard = RestoreGuard;
     execute!(stdout(), EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout());
-    Terminal::new(backend)
+    Ok((Terminal::new(backend)?, guard))
 }
 
 pub fn restore() -> io::Result<()> {
-    disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
-    Ok(())
+    let raw = disable_raw_mode();
+    let screen = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+    raw.and(screen)
 }
 
 /// Temporarily suspend the TUI so an external program can use the terminal.
 pub fn suspend() -> io::Result<()> {
-    disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
-    Ok(())
+    restore()
 }
 
 /// Resume the TUI after a call to `suspend()`.

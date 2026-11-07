@@ -14,6 +14,7 @@ pub enum Event {
 pub struct EventHandler {
     rx: mpsc::UnboundedReceiver<Event>,
     cancel: CancellationToken,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl EventHandler {
@@ -22,7 +23,7 @@ impl EventHandler {
         let cancel = CancellationToken::new();
         let token = cancel.clone();
 
-        tokio::spawn(async move {
+        let worker = std::thread::spawn(move || {
             loop {
                 if token.is_cancelled() {
                     break;
@@ -31,7 +32,7 @@ impl EventHandler {
                     Ok(v) => v,
                     Err(e) => {
                         log::warn!("event poll error: {}", e);
-                        continue;
+                        break;
                     }
                 };
                 if has_event {
@@ -48,6 +49,7 @@ impl EventHandler {
                         }
                         Err(e) => {
                             log::warn!("event read error: {}", e);
+                            break;
                         }
                         _ => {}
                     }
@@ -57,14 +59,27 @@ impl EventHandler {
             }
         });
 
-        Self { rx, cancel }
+        Self {
+            rx,
+            cancel,
+            worker: Some(worker),
+        }
     }
 
     pub async fn next(&mut self) -> Option<Event> {
         self.rx.recv().await
     }
 
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         self.cancel.cancel();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for EventHandler {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
