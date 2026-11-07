@@ -15,17 +15,67 @@ pub struct RemoteEntry {
     pub is_hidden: bool,
 }
 
-/// Russh client handler - accepts all server keys.
-pub struct SshClientHandler;
+/// Check host patterns (including hashed entries) with the system OpenSSH tools.
+pub struct SshClientHandler {
+    host: String,
+    port: u16,
+}
+
+fn pinned_key_matches(entries: &str, key: &russh::keys::PublicKey) -> bool {
+    let mut trusted = false;
+    for line in entries.lines().filter(|line| !line.starts_with('#')) {
+        let mut fields = line.split_whitespace();
+        let first = fields.next().unwrap_or_default();
+        let marked = first.starts_with('@');
+        if marked {
+            fields.next(); // host pattern
+        }
+        let (Some(kind), Some(data)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if russh::keys::PublicKey::from_openssh(&format!("{kind} {data}"))
+            .is_ok_and(|stored| stored.key_data() == key.key_data())
+        {
+            if first == "@revoked" {
+                return false;
+            }
+            trusted |= !marked;
+        }
+    }
+    trusted
+}
 
 impl client::Handler for SshClientHandler {
-    type Error = russh::Error;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } = server_key else {
+            return Err("SSH host certificates are not supported".into());
+        };
+        let host = if self.port == 22 {
+            self.host.clone()
+        } else {
+            format!("[{}]:{}", self.host, self.port)
+        };
+        let path = std::env::home_dir()
+            .ok_or("No home directory")?
+            .join(".ssh/known_hosts");
+        let result = tokio::process::Command::new("ssh-keygen")
+            .arg("-F")
+            .arg(&host)
+            .arg("-f")
+            .arg(&path)
+            .output()
+            .await
+            .map_err(|e| format!("Cannot check host key using ssh-keygen: {e}"))?;
+        if result.status.success() && pinned_key_matches(std::str::from_utf8(&result.stdout)?, key)
+        {
+            return Ok(true);
+        }
+        Err(format!("Untrusted SSH host key for {host}. Verify its fingerprint with the server administrator and check {}.", path.display()).into())
     }
 }
 
@@ -57,7 +107,10 @@ impl SshSession {
         password: Option<&str>,
     ) -> Result<Self, String> {
         let config = Arc::new(client::Config::default());
-        let handler = SshClientHandler;
+        let handler = SshClientHandler {
+            host: host.to_owned(),
+            port,
+        };
 
         let mut handle = client::connect(config, (host, port), handler)
             .await
@@ -66,19 +119,14 @@ impl SshSession {
         let mut authenticated = false;
 
         // Try key files first
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let key_candidates = [
-            format!("{}/.ssh/id_ed25519", home),
-            format!("{}/.ssh/id_rsa", home),
-            format!("{}/.ssh/id_ecdsa", home),
-        ];
-
-        for key_path in &key_candidates {
-            let path = std::path::Path::new(key_path);
+        for path in std::env::home_dir()
+            .into_iter()
+            .flat_map(|home| ["id_ed25519", "id_ecdsa"].map(|name| home.join(".ssh").join(name)))
+        {
             if !path.exists() {
                 continue;
             }
-            if let Ok(private_key) = russh::keys::load_secret_key(path, None) {
+            if let Ok(private_key) = russh::keys::load_secret_key(&path, None) {
                 let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(private_key), None);
                 match handle.authenticate_publickey(user, key_with_hash).await {
                     Ok(auth_result) if auth_result.success() => {
@@ -286,5 +334,26 @@ impl SshSession {
             .shutdown()
             .await
             .map_err(|e| format!("SFTP shutdown failed: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod host_key_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_matching_unrevoked_pin_authenticates_the_server() {
+        let a = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
+        let b = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF";
+        let key = russh::keys::PublicKey::from_openssh(a).unwrap();
+        assert!(pinned_key_matches(&format!("server {a} comment"), &key));
+        for entries in [
+            String::new(),
+            format!("server {b}"),
+            format!("@cert-authority server {a}"),
+            format!("server {a}\n@revoked server {a}"),
+        ] {
+            assert!(!pinned_key_matches(&entries, &key));
+        }
     }
 }

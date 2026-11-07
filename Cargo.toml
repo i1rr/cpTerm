@@ -18,9 +18,8 @@ toml = "0.8"
 chrono = "0.4"
 unicode-width = "0.2"
 log = "0.4"
-russh = { version = "0.58", features = ["async-trait"] }
+russh = { version = "0.65.1", default-features = false, features = ["ring"] }
 russh-sftp = "2"
-async-trait = "0.1"
 tempfile = "3"
 
 [profile.release]

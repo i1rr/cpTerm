@@ -8,7 +8,7 @@
 ```
 
 Dual-pane TUI file explorer in the style of Total Commander, written in Rust.
-Single native binary, no runtime dependencies.
+Single native binary. Some features use system tools.
 
 ![cpt screenshot](assets/screenshot.png)
 
@@ -45,6 +45,12 @@ cpt --debug               # write log to cpt.log
 ```
 
 ## Keybindings
+
+SSH uses OpenSSH's `ssh-keygen` and your `~/.ssh/known_hosts`. For a new
+server, first verify its host fingerprint with the administrator and record
+the verified key using OpenSSH. Unknown, changed and revoked keys are
+rejected before authentication. Ed25519 and ECDSA keys and password login
+are supported; RSA and host certificates are disabled.
 
 | Key | Action |
 |-----|--------|
