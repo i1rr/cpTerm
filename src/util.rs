@@ -45,9 +45,15 @@ pub fn clean_canonicalize(path: &std::path::Path) -> std::io::Result<PathBuf> {
 pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
-        let s = path.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return PathBuf::from(stripped);
+        if let Some(s) = path.to_str() {
+            if let Some(share) = s.strip_prefix(r"\\?\UNC\") {
+                return PathBuf::from(format!(r"\\{share}"));
+            }
+            if let Some(drive) = s.strip_prefix(r"\\?\")
+                && drive.as_bytes().get(1..3) == Some(b":\\")
+            {
+                return PathBuf::from(drive);
+            }
         }
     }
     path
@@ -75,6 +81,9 @@ pub fn format_date(dt: &DateTime<Local>) -> String {
 /// 2. The first 8 KB of the file are scanned for null bytes - a reliable
 ///    heuristic used by git, file(1), and most editors.
 pub fn is_text_file(path: &std::path::Path) -> bool {
+    if !path.is_file() {
+        return false;
+    } // Opening a FIFO for reading can block indefinitely.
     // Known binary extensions - skip the content probe for speed.
     const BINARY_EXTS: &[&str] = &[
         "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "tif", "tiff", "mp3", "mp4",

@@ -100,6 +100,10 @@ fn strip_unc_prefix_leaves_normal_path() {
 fn strip_unc_prefix_removes_windows_prefix() {
     let path = PathBuf::from(r"\\?\C:\Users\test");
     assert_eq!(strip_unc_prefix(path), PathBuf::from(r"C:\Users\test"));
+    assert_eq!(
+        strip_unc_prefix(PathBuf::from(r"\\?\UNC\server\share\file")),
+        PathBuf::from(r"\\server\share\file")
+    );
 }
 
 #[test]
