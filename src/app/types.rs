@@ -111,6 +111,7 @@ pub struct ContextMenuItem {
 pub(crate) enum PendingOp {
     Copy {
         pairs: Vec<(PathBuf, PathBuf)>,
+        conflicts: std::collections::HashSet<PathBuf>,
     },
     Move {
         pairs: Vec<(PathBuf, PathBuf)>,

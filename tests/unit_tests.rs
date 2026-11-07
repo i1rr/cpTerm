@@ -531,7 +531,9 @@ async fn copy_overwrite_replaces_existing() {
     fs::write(dst.join("file.txt"), "old").unwrap();
 
     let (tx, mut rx) = mpsc::unbounded_channel();
-    copy_entries(build_pairs(&[src.join("file.txt")], &dst), tx).await;
+    let pairs = build_pairs(&[src.join("file.txt")], &dst);
+    let conflicts = cpt::fs::ops::copy_conflicts(&pairs);
+    cpt::fs::ops::copy_entries_with_overwrites(pairs, conflicts, tx).await;
     drain(&mut rx);
     assert_eq!(fs::read_to_string(dst.join("file.txt")).unwrap(), "updated");
 

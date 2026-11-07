@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -24,6 +25,33 @@ pub fn find_conflicts(pairs: &[(PathBuf, PathBuf)]) -> Vec<usize> {
         .filter(|(_, (_, target))| target.symlink_metadata().is_ok())
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Snapshot only destinations that already conflict, including children of
+/// directories the overwrite choice would merge.
+pub fn copy_conflicts(pairs: &[(PathBuf, PathBuf)]) -> HashSet<PathBuf> {
+    fn visit(src: &Path, dest: &Path, conflicts: &mut HashSet<PathBuf>) {
+        let Ok(target) = dest.symlink_metadata() else {
+            return;
+        };
+        conflicts.insert(dest.to_owned());
+        if target.is_dir()
+            && !linked(&target)
+            && src
+                .symlink_metadata()
+                .is_ok_and(|m| m.is_dir() && !linked(&m))
+            && let Ok(entries) = src.read_dir()
+        {
+            for entry in entries.flatten() {
+                visit(&entry.path(), &dest.join(entry.file_name()), conflicts);
+            }
+        }
+    }
+    let mut conflicts = HashSet::new();
+    for (src, dest) in pairs {
+        visit(src, dest, &mut conflicts);
+    }
+    conflicts
 }
 
 /// Generate a unique target name by appending (1), (2), etc.
@@ -64,18 +92,31 @@ pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
 
 /// Copy a list of (source, target) pairs.
 pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+    copy_entries_with_overwrites(pairs, HashSet::new(), tx).await;
+}
+
+pub async fn copy_entries_with_overwrites(
+    pairs: Vec<(PathBuf, PathBuf)>,
+    overwrites: HashSet<PathBuf>,
+    tx: mpsc::UnboundedSender<Action>,
+) {
     let errors = tx.clone();
-    if let Err(e) = tokio::task::spawn_blocking(move || copy_blocking(pairs, tx)).await {
+    if let Err(e) = tokio::task::spawn_blocking(move || copy_blocking(pairs, overwrites, tx)).await
+    {
         let _ = errors.send(Action::OperationError(format!("copy worker failed: {e}")));
     }
 }
 
-fn copy_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+fn copy_blocking(
+    pairs: Vec<(PathBuf, PathBuf)>,
+    overwrites: HashSet<PathBuf>,
+    tx: mpsc::UnboundedSender<Action>,
+) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
     for (src, target) in &pairs {
-        let result = copy_tree(src, target);
+        let result = copy_tree(src, target, &|path| overwrites.contains(path));
 
         match result {
             Ok(()) => {
@@ -116,7 +157,7 @@ fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Actio
             if e.kind() != io::ErrorKind::CrossesDevices {
                 return Err(e);
             }
-            copy_tree(src, target)?;
+            copy_tree(src, target, &|_| true)?;
             if fs::symlink_metadata(src)?.is_dir() {
                 fs::remove_dir_all(src)
             } else {
@@ -194,7 +235,7 @@ fn linked(meta: &fs::Metadata) -> bool {
     meta.is_symlink()
 }
 
-fn copy_tree(src: &Path, dest: &Path) -> io::Result<()> {
+fn copy_tree(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io::Result<()> {
     let source = fs::canonicalize(src)?;
     let parent = fs::canonicalize(
         dest.parent()
@@ -209,22 +250,25 @@ fn copy_tree(src: &Path, dest: &Path) -> io::Result<()> {
             "cannot copy an item onto or inside itself",
         ));
     }
-    copy_item(src, &target)
+    copy_item(src, dest, can_replace)
 }
 
-fn copy_item(src: &Path, dest: &Path) -> io::Result<()> {
+fn copy_item(src: &Path, dest: &Path, can_replace: &dyn Fn(&Path) -> bool) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if linked(&meta) || dest.symlink_metadata().is_ok_and(|m| linked(&m)) {
         return Err(io::Error::other("refusing to follow a link during copy"));
     }
     if meta.is_dir() {
         match fs::create_dir(dest) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && dest.is_dir() => {}
+            Err(e)
+                if e.kind() == io::ErrorKind::AlreadyExists
+                    && can_replace(dest)
+                    && dest.is_dir() => {}
             result => result?,
         }
         for entry in fs::read_dir(src)? {
             let entry = entry?;
-            copy_item(&entry.path(), &dest.join(entry.file_name()))?;
+            copy_item(&entry.path(), &dest.join(entry.file_name()), can_replace)?;
         }
     } else if meta.is_file() {
         // Publish only complete copies. Replacing a hard link does not truncate its source.
@@ -233,7 +277,16 @@ fn copy_item(src: &Path, dest: &Path) -> io::Result<()> {
                 .ok_or_else(|| io::Error::other("missing destination parent"))?,
         )?;
         fs::copy(src, tmp.path())?;
-        tmp.persist(dest)?;
+        if can_replace(dest) {
+            tmp.persist(dest)?;
+        } else {
+            tmp.persist_noclobber(dest).map_err(|e| {
+                io::Error::new(
+                    e.error.kind(),
+                    format!("Cannot create {}: {}", dest.display(), e.error),
+                )
+            })?;
+        }
     } else {
         return Err(io::Error::other("cannot copy a special file"));
     }

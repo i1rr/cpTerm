@@ -10,9 +10,9 @@ impl App {
     pub(super) fn execute_op(&mut self, op: PendingOp) {
         let tx = self.action_tx.clone();
         match op {
-            PendingOp::Copy { ref pairs } => {
+            PendingOp::Copy { pairs, .. } => {
                 self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
-                tokio::spawn(ops::copy_entries(pairs.clone(), tx));
+                tokio::spawn(ops::copy_entries(pairs, tx));
             }
             PendingOp::Move { ref pairs } => {
                 self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
@@ -358,10 +358,12 @@ impl App {
                     }
                     let dest = self.dual_pane.inactive_dir();
                     let pairs = ops::build_pairs(&sources, &dest);
-                    let conflicts = ops::find_conflicts(&pairs);
+                    let conflicts = ops::copy_conflicts(&pairs);
+                    let conflict_count =
+                        pairs.iter().filter(|(_, t)| conflicts.contains(t)).count();
                     let count = pairs.len();
-                    self.pending_op = Some(PendingOp::Copy { pairs });
-                    if conflicts.is_empty() {
+                    self.pending_op = Some(PendingOp::Copy { pairs, conflicts });
+                    if conflict_count == 0 {
                         self.dialog = Some(Dialog::confirm(
                             "Copy",
                             format!("Copy {} item(s) to {}?", count, dest.display()),
@@ -372,7 +374,7 @@ impl App {
                             format!(
                                 "{} of {} item(s) already exist in {}\n\n\
                                  (O)verwrite  (R)ename  Esc: Cancel",
-                                conflicts.len(),
+                                conflict_count,
                                 count,
                                 dest.display()
                             ),
@@ -451,7 +453,16 @@ impl App {
             }
             Action::ConflictOverwrite => {
                 if let Some(op) = self.pending_op.take() {
-                    self.execute_op(op);
+                    if let PendingOp::Copy { pairs, conflicts } = op {
+                        self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
+                        tokio::spawn(ops::copy_entries_with_overwrites(
+                            pairs,
+                            conflicts,
+                            self.action_tx.clone(),
+                        ));
+                    } else {
+                        self.execute_op(op);
+                    }
                     self.dialog = None;
                 }
                 true
@@ -459,9 +470,12 @@ impl App {
             Action::ConflictRename => {
                 if let Some(op) = self.pending_op.take() {
                     let op = match op {
-                        PendingOp::Copy { mut pairs } => {
+                        PendingOp::Copy { mut pairs, .. } => {
                             ops::rename_conflicts(&mut pairs);
-                            PendingOp::Copy { pairs }
+                            PendingOp::Copy {
+                                pairs,
+                                conflicts: Default::default(),
+                            }
                         }
                         PendingOp::Move { mut pairs } => {
                             ops::rename_conflicts(&mut pairs);

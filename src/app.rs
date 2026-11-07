@@ -229,6 +229,24 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    #[tokio::test]
+    async fn f5_preserves_a_file_created_after_the_conflict_check() {
+        let source = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join("report"), "copy").unwrap();
+        let mut app = make_app();
+        app.dual_pane = DualPane::new(source.path().into(), dest.path().into(), PaneSide::Left);
+        app.dual_pane.active_explorer_mut().unwrap().cursor = 1;
+        app.dispatch(Action::CopySelected);
+        assert!(app.pending_op.is_some());
+        let target = dest.path().join("report");
+        std::fs::write(&target, "arrived later").unwrap();
+        app.dispatch(Action::ConfirmDialog);
+        let result = app.action_rx.recv().await.unwrap();
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "arrived later");
+        assert!(matches!(result, Action::OperationError(_)));
+    }
+
     #[test]
     fn destructive_dialogs_only_accept_their_displayed_choices() {
         let mut app = make_app();

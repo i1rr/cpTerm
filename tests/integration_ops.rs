@@ -42,14 +42,34 @@ async fn overlapping_copies_preserve_source_data() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     copy_entries(vec![(source.clone(), source.clone())], tx.clone()).await;
     assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
-    copy_entries(vec![(source.clone(), alias.clone())], tx.clone()).await;
+    let pairs = vec![(source.clone(), alias.clone())];
+    let approved = cpt::fs::ops::copy_conflicts(&pairs);
+    cpt::fs::ops::copy_entries_with_overwrites(pairs, approved, tx.clone()).await;
     assert_eq!(fs::read(&source).unwrap(), b"keep me");
     assert_eq!(fs::read(&alias).unwrap(), b"keep me");
-    drain(&mut rx);
+    assert!(
+        drain(&mut rx)
+            .iter()
+            .any(|a| matches!(a, Action::OperationComplete(_)))
+    );
     let nested = dir.path().join("nested");
     copy_entries(vec![(dir.path().to_owned(), nested.clone())], tx).await;
     assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
     assert!(!nested.exists());
+}
+
+#[tokio::test]
+async fn approving_a_directory_merge_does_not_overwrite_a_late_child() {
+    let src = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let pairs = vec![(src.path().to_owned(), dest.path().to_owned())];
+    fs::write(src.path().join("late"), "from source").unwrap();
+    let approved = cpt::fs::ops::copy_conflicts(&pairs);
+    fs::write(dest.path().join("late"), "new arrival").unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    cpt::fs::ops::copy_entries_with_overwrites(pairs, approved, tx).await;
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    assert_eq!(fs::read(dest.path().join("late")).unwrap(), b"new arrival");
 }
 
 fn tool_available(tool: &str) -> bool {
