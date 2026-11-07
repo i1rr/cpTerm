@@ -67,6 +67,9 @@ are supported; RSA and host certificates are disabled.
 
 Uploads and downloads require a new destination filename. Remote text previews
 are read-only and limited to 64 KiB; download larger files to view them locally.
+An upload appears under its final name after the server confirms the file is
+closed. If a connection drops, retry the same filename. A hidden
+`.cpt-upload-*.part` file may remain on the server after a disconnect.
 
 ## Keybindings
 

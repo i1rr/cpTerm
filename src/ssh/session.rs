@@ -345,34 +345,70 @@ impl SshSession {
         local_path: &std::path::Path,
         remote_path: &str,
     ) -> Result<(), String> {
-        use tokio::io::AsyncWriteExt;
-
-        use russh_sftp::protocol::OpenFlags;
         if !local_path.is_file() {
             return Err("Upload source is not a regular file".into());
         }
-        let mut source = tokio::fs::File::open(local_path)
+        let source = tokio::fs::File::open(local_path)
             .await
             .map_err(|e| format!("Local read failed: {e}"))?;
 
-        let mut remote_file = self
-            .sftp
-            .open_with_flags(
-                remote_path,
-                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
-            )
-            .await
-            .map_err(|e| format!("SFTP create failed: {}", e))?;
-
-        tokio::io::copy(&mut source, &mut remote_file)
-            .await
-            .map_err(|e| format!("SFTP write failed: {}", e))?;
-
-        remote_file
-            .shutdown()
-            .await
-            .map_err(|e| format!("SFTP shutdown failed: {}", e))
+        upload_from(&self.sftp, source, remote_path).await
     }
+}
+
+/// Publish a streamed upload only after the server acknowledges close.
+pub async fn upload_from(
+    sftp: &russh_sftp::client::SftpSession,
+    mut source: impl tokio::io::AsyncRead + Unpin,
+    dest: &str,
+) -> Result<(), String> {
+    use russh_sftp::{
+        client::error::Error,
+        protocol::{OpenFlags, StatusCode},
+    };
+    use tokio::io::AsyncWriteExt;
+
+    match sftp.symlink_metadata(dest).await {
+        Ok(_) => return Err(format!("Upload destination already exists: {dest}")),
+        Err(Error::Status(s)) if s.status_code == StatusCode::NoSuchFile => {}
+        Err(e) => return Err(format!("Cannot check upload destination: {e}")),
+    }
+    let prefix = dest.rfind('/').map_or("", |i| &dest[..=i]);
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
+    let staging = format!(
+        "{prefix}.cpt-upload-{:032x}.part",
+        u128::from_le_bytes(nonce)
+    );
+    if staging == dest {
+        return Err("Temporary name matches destination; retry upload".into());
+    }
+    let mut file = sftp
+        .open_with_flags(
+            staging.as_str(),
+            OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+        )
+        .await
+        .map_err(|e| format!("Cannot stage upload: {e}"))?;
+    let result = async {
+        let copy = tokio::io::copy(&mut source, &mut file).await;
+        let close = file.shutdown().await;
+        copy.map_err(|e| format!("SFTP write failed: {e}"))?;
+        close.map_err(|e| format!("SFTP close failed: {e}"))?;
+        // Standard SFTP v3 RENAME refuses an existing target, including one
+        // created after the initial check. The POSIX extension would replace it.
+        sftp.rename(staging.as_str(), dest)
+            .await
+            .map_err(|e| format!("Cannot publish {dest}: {e}"))
+    }
+    .await;
+    if let Err(error) = result {
+        return match sftp.remove_file(staging.as_str()).await {
+            Ok(()) => Err(error),
+            Err(e) => Err(format!("{error}. Could not clean up {staging}: {e}")),
+        };
+    }
+    Ok(())
 }
 
 #[cfg(test)]

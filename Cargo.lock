@@ -604,6 +604,7 @@ dependencies = [
  "confy",
  "crossterm 0.29.0",
  "flate2",
+ "getrandom 0.4.3",
  "log",
  "open",
  "ratatui",

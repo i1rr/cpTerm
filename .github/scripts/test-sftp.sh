@@ -28,5 +28,6 @@ EOF
 sudo mkdir -p /run/sshd
 sudo /usr/sbin/sshd -f "$fixture/sshd_config"
 export CPT_SSH_FIXTURE="$fixture" CPT_SSH_USER="$(id -un)"
+export CPT_TEST_SFTP_SERVER=/usr/lib/openssh/sftp-server
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 HOME="$fixture/home" cargo +stable test --locked --test ssh_loopback -- --ignored
