@@ -51,5 +51,5 @@ python3 .github/scripts/audit_lock.py
 
 The audit uses Python 3.11+ and sends public crate names and versions to OSV.
 CI also opens the real binary in a terminal and runs the loopback SSH test on
-Linux. Confirm the final push passes on Linux and Windows. Commit messages
+Linux. Confirm the final push passes on Linux, macOS and Windows. Commit messages
 use lowercase imperative subjects; avoid em dashes in text and commits.
