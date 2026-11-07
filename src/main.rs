@@ -1,25 +1,9 @@
-mod action;
-mod app;
-mod bookmarks;
-mod cli;
-mod components;
-mod config;
-mod event;
-mod fs;
-mod logger;
-mod ssh;
-mod task;
-mod theme;
-mod tui;
-mod util;
-
 use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::Result;
 
-use crate::cli::Cli;
-use crate::config::SessionConfig;
+use cpt::{app, cli::Cli, config::SessionConfig, logger, util};
 
 #[tokio::main]
 async fn main() -> Result<()> {
