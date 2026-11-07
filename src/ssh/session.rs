@@ -190,7 +190,7 @@ impl SshSession {
             .into_iter()
             .filter(|e| {
                 let n = e.file_name();
-                n != "." && n != ".."
+                crate::util::valid_filename(&n)
             })
             .map(|e| {
                 let name = e.file_name();
@@ -259,6 +259,9 @@ impl SshSession {
             if name == "." || name == ".." {
                 continue;
             }
+            if !crate::util::valid_filename(&name) {
+                return Err("Invalid child name in remote directory".into());
+            }
             let child_path = format!("{}/{}", path, name);
             let is_dir = entry
                 .metadata()
@@ -292,21 +295,48 @@ impl SshSession {
         remote_path: &str,
         local_path: &std::path::Path,
     ) -> Result<(), String> {
-        use tokio::io::AsyncReadExt;
-
-        let mut remote_file = self
+        use tokio::io::AsyncWriteExt;
+        let mut source = self
             .sftp
             .open(remote_path)
             .await
-            .map_err(|e| format!("SFTP open failed: {}", e))?;
-
-        let mut data = Vec::new();
-        remote_file
-            .read_to_end(&mut data)
+            .map_err(|e| e.to_string())?;
+        let tmp =
+            tempfile::NamedTempFile::new_in(local_path.parent().ok_or("invalid destination")?)
+                .map_err(|e| e.to_string())?;
+        let (file, path) = tmp.into_parts();
+        let mut output = tokio::fs::File::from_std(file);
+        tokio::io::copy(&mut source, &mut output)
             .await
-            .map_err(|e| format!("SFTP read failed: {}", e))?;
+            .map_err(|e| e.to_string())?;
+        output.flush().await.map_err(|e| e.to_string())?;
+        drop(output);
+        path.persist_noclobber(local_path)
+            .map_err(|e| format!("Cannot create {}: {e}", local_path.display()))
+    }
 
-        std::fs::write(local_path, &data).map_err(|e| format!("Local write failed: {}", e))
+    /// Keep previews in memory and bound the amount read from an untrusted server.
+    pub async fn preview(&self, remote_path: &str) -> Result<String, String> {
+        use tokio::io::AsyncReadExt;
+        const LIMIT: u64 = 64 * 1024;
+        let file = self
+            .sftp
+            .open(remote_path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > LIMIT {
+            return Err("Preview limit is 64 KiB; download the file to open it locally".into());
+        }
+        let text = String::from_utf8(bytes).map_err(|_| "Cannot preview non-UTF-8 data")?;
+        Ok(text
+            .chars()
+            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+            .collect())
     }
 
     /// Upload a local file to a remote path.
@@ -317,16 +347,21 @@ impl SshSession {
     ) -> Result<(), String> {
         use tokio::io::AsyncWriteExt;
 
-        let data = std::fs::read(local_path).map_err(|e| format!("Local read failed: {}", e))?;
+        use russh_sftp::protocol::OpenFlags;
+        let mut source = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|e| format!("Local read failed: {e}"))?;
 
         let mut remote_file = self
             .sftp
-            .create(remote_path)
+            .open_with_flags(
+                remote_path,
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
             .await
             .map_err(|e| format!("SFTP create failed: {}", e))?;
 
-        remote_file
-            .write_all(&data)
+        tokio::io::copy(&mut source, &mut remote_file)
             .await
             .map_err(|e| format!("SFTP write failed: {}", e))?;
 

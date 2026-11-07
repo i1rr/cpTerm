@@ -33,15 +33,6 @@ mod input;
 pub struct BackgroundedSession {
     pub session: Arc<tokio::sync::Mutex<crate::ssh::session::SshSession>>,
     pub last_path: String,
-    // Stored for future display/reconnect; not read by current code.
-    #[allow(dead_code)]
-    pub host_label: String,
-    #[allow(dead_code)]
-    pub port: u16,
-    #[allow(dead_code)]
-    pub user: String,
-    #[allow(dead_code)]
-    pub host: String,
 }
 
 pub struct App {

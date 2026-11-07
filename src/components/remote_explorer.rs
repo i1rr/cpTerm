@@ -271,7 +271,7 @@ impl RemoteExplorer {
         } else if title_str.len() > max_title {
             let keep = max_title.saturating_sub(2);
             let start = title_str.len().saturating_sub(keep);
-            format!("..{}", &title_str[start..])
+            format!("..{}", &title_str[title_str.ceil_char_boundary(start)..])
         } else {
             title_str
         };

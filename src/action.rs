@@ -134,6 +134,7 @@ pub enum Action {
     SshConnectPrevField,
     SshConnectConfirm,
     SshConnected {
+        side: PaneSide,
         session: Arc<tokio::sync::Mutex<crate::ssh::session::SshSession>>,
         host: String,
         port: u16,
@@ -157,12 +158,16 @@ pub enum Action {
     },
     RemoteNavigate(String),
     RemoteListing {
+        session: Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
         path: String,
         entries: Vec<crate::ssh::session::RemoteEntry>,
     },
-    RemoteListingFailed(String),
+    RemoteListingFailed(Arc<tokio::sync::Mutex<crate::ssh::SshSession>>, String),
     RemoteViewFile,
-    RemoteViewReady(PathBuf),
+    RemoteViewReady {
+        session: Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
+        text: String,
+    },
     RemoteDownload,
     RemoteUpload,
     RemoteOpComplete(String),

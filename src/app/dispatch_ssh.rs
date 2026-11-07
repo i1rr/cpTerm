@@ -68,6 +68,20 @@ pub(super) fn dirs_next_home() -> Option<PathBuf> {
 }
 
 impl App {
+    fn remote_for_session(
+        &mut self,
+        session: &Arc<tokio::sync::Mutex<crate::ssh::SshSession>>,
+    ) -> Option<&mut RemoteExplorer> {
+        [&mut self.dual_pane.left, &mut self.dual_pane.right]
+            .into_iter()
+            .find_map(|pane| match pane {
+                PaneContent::Remote(remote) if Arc::ptr_eq(&remote.session, session) => {
+                    Some(remote)
+                }
+                _ => None,
+            })
+    }
+
     pub(super) fn do_command(&mut self, cmd: &str) {
         let cmd = cmd.trim();
         if cmd.is_empty() {
@@ -92,6 +106,7 @@ impl App {
             log::debug!("ssh: connecting to {}@{}{}", user, host, path);
             self.connecting_to = Some(format!("{}@{}", user, host));
             let tx = self.action_tx.clone();
+            let side = self.dual_pane.active;
             tokio::spawn(async move {
                 match crate::ssh::session::SshSession::connect(&host, 22, &user, None).await {
                     Ok(session) => {
@@ -100,6 +115,7 @@ impl App {
                         match entries {
                             Ok(entries) => {
                                 let _ = tx.send(Action::SshConnected {
+                                    side,
                                     session,
                                     host,
                                     port: 22,
@@ -127,6 +143,22 @@ impl App {
                     }
                 }
             });
+            return;
+        }
+
+        if let Some(remote) = self.dual_pane.active_remote() {
+            if let Some(path) = cmd.strip_prefix("cd ") {
+                let path = path.trim();
+                let path = if path.starts_with('/') {
+                    path.to_owned()
+                } else {
+                    format!("{}/{}", remote.current_path.trim_end_matches('/'), path)
+                };
+                self.dispatch_ssh(Action::RemoteNavigate(path));
+            } else {
+                self.dialog = Some(Dialog::error("Shell commands run in local panes only"));
+            }
+            self.input_mode = InputMode::Normal;
             return;
         }
 
@@ -212,7 +244,7 @@ impl App {
                     if let Some(ref last) = last_ssh
                         && !last.host.is_empty()
                     {
-                        let key = format!("{}@{}", last.user, last.host);
+                        let key = format!("{}@{}:{}", last.user, last.host, last.port);
                         if let Some(entry) = self.ssh_sessions.get(&key) {
                             let session = entry.session.clone();
                             let path = entry.last_path.clone();
@@ -220,6 +252,7 @@ impl App {
                             let user = last.user.clone();
                             let port = last.port;
                             let tx = self.action_tx.clone();
+                            let side = self.dual_pane.active;
                             let key_clone = key.clone();
                             tokio::spawn(async move {
                                 let result = {
@@ -229,6 +262,7 @@ impl App {
                                 match result {
                                     Ok(entries) => {
                                         let _ = tx.send(Action::SshConnected {
+                                            side,
                                             session,
                                             host,
                                             port,
@@ -275,14 +309,6 @@ impl App {
                     let entry = BackgroundedSession {
                         session: remote.session.clone(),
                         last_path: remote.current_path.clone(),
-                        host_label: remote.host_label.clone(),
-                        port: SessionConfig::load()
-                            .last_ssh
-                            .as_ref()
-                            .map(|s| s.port)
-                            .unwrap_or(22),
-                        user: key.split('@').next().unwrap_or("").to_string(),
-                        host: key.split('@').nth(1).unwrap_or("").to_string(),
                     };
                     self.ssh_sessions.insert(key, entry);
                 }
@@ -321,11 +347,16 @@ impl App {
                     }
                     state.connecting = true;
                     let host = state.host().to_string();
-                    let port = state.port();
+                    let Some(port) = state.port() else {
+                        state.connecting = false;
+                        self.dialog = Some(Dialog::error("Port must be between 1 and 65535"));
+                        return true;
+                    };
                     let user = state.user().to_string();
                     let path = state.path().to_string();
                     let password = state.password().map(|s| s.to_string());
                     let tx = self.action_tx.clone();
+                    let side = self.dual_pane.active;
                     tokio::spawn(async move {
                         match crate::ssh::SshSession::connect(
                             &host,
@@ -340,6 +371,7 @@ impl App {
                                 match session_arc.lock().await.list_dir(&path).await {
                                     Ok(entries) => {
                                         let _ = tx.send(Action::SshConnected {
+                                            side,
                                             session: session_arc.clone(),
                                             host,
                                             port,
@@ -365,6 +397,7 @@ impl App {
                 true
             }
             Action::SshConnected {
+                side,
                 session,
                 host,
                 port,
@@ -384,14 +417,21 @@ impl App {
                     path: initial_path.clone(),
                 });
                 cfg.save();
-                let host_label = format!("{}@{}:", user, host);
+                let host_label = format!("{}@{}:{}:", user, host, port);
                 // Remove from background map if it was there (now it's the active pane)
-                let key = format!("{}@{}", user, host);
+                let key = format!("{}@{}:{}", user, host, port);
                 self.ssh_sessions.remove(&key);
                 let remote = RemoteExplorer::new(session, initial_path, entries, host_label);
-                match self.dual_pane.active {
-                    PaneSide::Left => self.dual_pane.left = PaneContent::Remote(remote),
-                    PaneSide::Right => self.dual_pane.right = PaneContent::Remote(remote),
+                let pane = match side {
+                    PaneSide::Left => &mut self.dual_pane.left,
+                    PaneSide::Right => &mut self.dual_pane.right,
+                };
+                if matches!(pane, PaneContent::Editor(_)) {
+                    self.dialog = Some(Dialog::error(
+                        "Connection cancelled: the destination pane is editing a file",
+                    ));
+                } else {
+                    *pane = PaneContent::Remote(remote);
                 }
                 true
             }
@@ -435,26 +475,31 @@ impl App {
                         match sess.list_dir(&path_clone).await {
                             Ok(entries) => {
                                 let _ = tx.send(Action::RemoteListing {
+                                    session: session.clone(),
                                     path: path_clone,
                                     entries,
                                 });
                             }
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(e));
+                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
                             }
                         }
                     });
                 }
                 true
             }
-            Action::RemoteListing { path, entries } => {
-                if let Some(remote) = self.dual_pane.active_remote_mut() {
+            Action::RemoteListing {
+                session,
+                path,
+                entries,
+            } => {
+                if let Some(remote) = self.remote_for_session(&session) {
                     remote.update_listing(path, entries);
                 }
                 true
             }
-            Action::RemoteListingFailed(msg) => {
-                if let Some(remote) = self.dual_pane.active_remote_mut() {
+            Action::RemoteListingFailed(session, msg) => {
+                if let Some(remote) = self.remote_for_session(&session) {
                     remote.loading = false;
                 }
                 self.dialog = Some(Dialog::error(format!("Remote listing failed: {}", msg)));
@@ -470,27 +515,13 @@ impl App {
                     let name = entry.name.clone();
                     let tx = self.action_tx.clone();
                     tokio::spawn(async move {
-                        // Determine file extension for tempfile suffix
-                        let suffix = std::path::Path::new(&name)
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| format!(".{}", e))
-                            .unwrap_or_default();
-                        let tmp = match tempfile::Builder::new().suffix(&suffix).tempfile() {
-                            Ok(f) => f,
-                            Err(e) => {
-                                let _ = tx
-                                    .send(Action::RemoteOpError(format!("Tempfile error: {}", e)));
-                                return;
-                            }
-                        };
-                        let tmp_path = tmp.path().to_path_buf();
-                        // Keep the tempfile from being deleted
-                        let _ = tmp.keep();
                         let sess = session.lock().await;
-                        match sess.download(&remote_path, &tmp_path).await {
-                            Ok(()) => {
-                                let _ = tx.send(Action::RemoteViewReady(tmp_path));
+                        match sess.preview(&remote_path).await {
+                            Ok(content) => {
+                                let _ = tx.send(Action::RemoteViewReady {
+                                    session: session.clone(),
+                                    text: format!("{name}\n\n{content}"),
+                                });
                             }
                             Err(e) => {
                                 let _ = tx.send(Action::RemoteOpError(format!(
@@ -503,9 +534,13 @@ impl App {
                 }
                 true
             }
-            Action::RemoteViewReady(path) => {
-                if let Err(msg) = self.dual_pane.open_editor_in_active(path) {
-                    self.dialog = Some(Dialog::error(msg));
+            Action::RemoteViewReady { session, text } => {
+                if self
+                    .dual_pane
+                    .active_remote()
+                    .is_some_and(|r| Arc::ptr_eq(&r.session, &session))
+                {
+                    self.dialog = Some(Dialog::info(text));
                 }
                 true
             }
@@ -521,12 +556,13 @@ impl App {
                         match sess.list_dir(&current_path).await {
                             Ok(entries) => {
                                 let _ = tx.send(Action::RemoteListing {
+                                    session: session.clone(),
                                     path: current_path,
                                     entries,
                                 });
                             }
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(e));
+                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
                             }
                         }
                     });
@@ -562,12 +598,13 @@ impl App {
                         match sess.list_dir(&current_path).await {
                             Ok(entries) => {
                                 let _ = tx.send(Action::RemoteListing {
+                                    session: session.clone(),
                                     path: current_path,
                                     entries,
                                 });
                             }
                             Err(e) => {
-                                let _ = tx.send(Action::RemoteListingFailed(e));
+                                let _ = tx.send(Action::RemoteListingFailed(session.clone(), e));
                             }
                         }
                     });

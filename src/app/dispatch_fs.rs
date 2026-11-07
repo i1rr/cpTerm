@@ -59,7 +59,11 @@ impl App {
                     let mut errors = Vec::new();
                     let total = paths.len();
                     for remote_path in &paths {
-                        let filename = remote_path.rsplit('/').next().unwrap_or("file");
+                        let filename = remote_path.rsplit('/').next().unwrap_or_default();
+                        if !crate::util::valid_filename(filename) {
+                            errors.push(format!("Invalid download filename: {filename:?}"));
+                            continue;
+                        }
                         let local = dest.join(filename);
                         if let Err(e) = sess.download(remote_path, &local).await {
                             errors.push(e);
@@ -85,10 +89,13 @@ impl App {
                     let mut errors = Vec::new();
                     let total = paths.len();
                     for local_path in &paths {
-                        let filename = local_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file");
+                        let Some(filename) = local_path.file_name().and_then(|n| n.to_str()) else {
+                            errors.push(format!(
+                                "Cannot upload non-UTF-8 filename: {}",
+                                local_path.display()
+                            ));
+                            continue;
+                        };
                         let rpath = format!("{}/{}", remote_dest.trim_end_matches('/'), filename);
                         if let Err(e) = sess.upload(local_path, &rpath).await {
                             errors.push(e);

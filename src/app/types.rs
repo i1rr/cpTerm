@@ -16,7 +16,9 @@ impl Default for SshConnectState {
             fields: vec![
                 String::new(),
                 "22".to_string(),
-                std::env::var("USER").unwrap_or_default(),
+                std::env::var("USER")
+                    .or_else(|_| std::env::var("USERNAME"))
+                    .unwrap_or_default(),
                 "/".to_string(),
                 String::new(),
             ],
@@ -35,8 +37,8 @@ impl SshConnectState {
         &self.fields[0]
     }
 
-    pub fn port(&self) -> u16 {
-        self.fields[1].parse().unwrap_or(22)
+    pub fn port(&self) -> Option<u16> {
+        self.fields[1].parse().ok().filter(|p| *p > 0)
     }
 
     pub fn user(&self) -> &str {

@@ -125,10 +125,10 @@ impl Dialog {
             }
         };
 
-        let content_lines = text.lines().count() as u16;
+        let content_lines = u16::try_from(text.lines().count()).unwrap_or(u16::MAX);
         // Height: content lines + 2 for borders, capped to 80% of terminal
         let max_height = (area.height as f32 * 0.8) as u16;
-        let desired_height = (content_lines + 2).min(max_height).max(5);
+        let desired_height = content_lines.saturating_add(2).min(max_height).max(5);
 
         let popup_area = centered_rect_with_height(60, desired_height, area);
         frame.render_widget(Clear, popup_area);

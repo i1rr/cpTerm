@@ -44,13 +44,18 @@ cpt /left /right          # set both panes
 cpt --debug               # write log to cpt.log
 ```
 
-## Keybindings
+## SSH
 
 SSH uses OpenSSH's `ssh-keygen` and your `~/.ssh/known_hosts`. For a new
 server, first verify its host fingerprint with the administrator and record
 the verified key using OpenSSH. Unknown, changed and revoked keys are
 rejected before authentication. Ed25519 and ECDSA keys and password login
 are supported; RSA and host certificates are disabled.
+
+Uploads and downloads require a new destination filename. Remote text previews
+are read-only and limited to 64 KiB; download larger files to view them locally.
+
+## Keybindings
 
 | Key | Action |
 |-----|--------|
