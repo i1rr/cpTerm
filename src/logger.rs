@@ -70,7 +70,7 @@ pub fn enable_debug() {
 
 fn log_path() -> Option<PathBuf> {
     // Use the same directory as the session config so all cpt files are co-located.
-    confy::get_configuration_file_path("cpt", Some("cpt"))
+    crate::config::config_path(Some("cpt"))
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("cpt.log")))
 }

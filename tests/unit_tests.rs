@@ -29,10 +29,11 @@ use tokio::sync::mpsc;
 // ── helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("cpt_test_{}", prefix));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .unwrap()
+        .keep()
 }
 
 fn make_entry(name: &str, is_dir: bool, size: u64) -> FileEntry {
@@ -1137,13 +1138,6 @@ fn theme_save_load_and_delete_file() {
         format!("{:?}", loaded.border_focused),
         format!("{:?}", Color::Red)
     );
-
-    let name = "cpt-test-temp-delete-me";
-    let saved = theme.save_to_file(name).expect("save_to_file failed");
-    assert!(saved.exists());
-    Theme::delete_file(name).expect("delete_file failed");
-    assert!(!saved.exists());
-    Theme::delete_file("cpt-test-nonexistent-xyz").expect("delete is idempotent");
 
     fs::remove_dir_all(&dir).ok();
 }

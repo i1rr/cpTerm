@@ -23,13 +23,15 @@ pub struct BookmarkList {
 
 impl BookmarkList {
     pub fn load() -> Self {
-        match confy::load::<BookmarkFile>("cpt", Some("bookmarks")) {
+        match crate::config::config_path(Some("bookmarks"))
+            .and_then(confy::load_path::<BookmarkFile>)
+        {
             Ok(file) => Self {
                 entries: file.bookmarks,
                 load_failed: false,
             },
             Err(e) => {
-                let path = confy::get_configuration_file_path("cpt", Some("bookmarks"))
+                let path = crate::config::config_path(Some("bookmarks"))
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|_| "unknown location".to_string());
                 log::warn!(
@@ -53,7 +55,7 @@ impl BookmarkList {
 
     /// Returns the path to the bookmarks file, for use in error messages.
     pub fn file_path() -> Option<String> {
-        confy::get_configuration_file_path("cpt", Some("bookmarks"))
+        crate::config::config_path(Some("bookmarks"))
             .ok()
             .map(|p| p.display().to_string())
     }
@@ -69,7 +71,9 @@ impl BookmarkList {
         let file = BookmarkFile {
             bookmarks: self.entries.clone(),
         };
-        if let Err(e) = confy::store("cpt", Some("bookmarks"), &file) {
+        if let Err(e) =
+            crate::config::config_path(Some("bookmarks")).and_then(|p| confy::store_path(p, &file))
+        {
             log::warn!("failed to save bookmarks: {}", e);
         }
     }

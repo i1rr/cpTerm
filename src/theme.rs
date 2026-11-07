@@ -352,7 +352,7 @@ impl Theme {
     // ── File I/O ─────────────────────────────────────────
 
     pub fn themes_dir() -> Option<PathBuf> {
-        let config_path = confy::get_configuration_file_path("cpt", None).ok()?;
+        let config_path = crate::config::config_path(None).ok()?;
         Some(config_path.parent()?.join("themes"))
     }
 
@@ -410,5 +410,19 @@ impl Theme {
                 .map_err(|e| format!("failed to delete theme file: {}", e))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_theme_round_trips_in_isolated_storage() {
+        let path = Theme::muted().save_to_file("example").unwrap();
+        assert_eq!(Theme::by_name("example").dir_fg, Theme::muted().dir_fg);
+        Theme::delete_file("example").unwrap();
+        assert!(!path.exists());
+        Theme::delete_file("example").unwrap();
     }
 }

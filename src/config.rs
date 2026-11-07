@@ -19,6 +19,20 @@ pub struct LastSshConfig {
     pub path: String,
 }
 
+/// Use the same storage paths across session, bookmark, theme and log files.
+pub(crate) fn config_path(name: Option<&str>) -> Result<PathBuf, confy::ConfyError> {
+    #[cfg(test)]
+    {
+        thread_local! { static DIR: tempfile::TempDir = tempfile::tempdir().unwrap(); }
+        Ok(DIR.with(|d| {
+            d.path()
+                .join(format!("{}.toml", name.unwrap_or("default-config")))
+        }))
+    }
+    #[cfg(not(test))]
+    confy::get_configuration_file_path("cpt", name)
+}
+
 fn default_ssh_port() -> u16 {
     22
 }
@@ -64,17 +78,27 @@ impl SessionConfig {
         // "default-config.toml". We now use an explicit name ("cpt") so the file is "cpt.toml".
         // Migrate transparently: if "cpt.toml" doesn't exist but the legacy "default-config.toml"
         // does, load from the legacy file and save under the new name.
-        let named_path = confy::get_configuration_file_path("cpt", Some("cpt")).ok();
-        let legacy_path = confy::get_configuration_file_path("cpt", None).ok(); // default-config.toml
+        let named_path = config_path(Some("cpt")).ok();
+        let legacy_path = config_path(None).ok(); // default-config.toml
 
         let named_exists = named_path.as_ref().is_some_and(|p| p.exists());
         let legacy_exists = legacy_path.as_ref().is_some_and(|p| p.exists());
 
         let (mut config, needs_save): (Self, bool) = if !named_exists && legacy_exists {
             log::warn!("migrating session config from default-config.toml to cpt.toml");
-            (confy::load("cpt", None).unwrap_or_default(), true)
+            (
+                config_path(None)
+                    .and_then(confy::load_path)
+                    .unwrap_or_default(),
+                true,
+            )
         } else {
-            (confy::load("cpt", Some("cpt")).unwrap_or_default(), false)
+            (
+                config_path(Some("cpt"))
+                    .and_then(confy::load_path)
+                    .unwrap_or_default(),
+                false,
+            )
         };
 
         config.left_dir = strip_unc_prefix(config.left_dir);
@@ -88,7 +112,7 @@ impl SessionConfig {
     }
 
     pub fn save(&self) {
-        if let Err(e) = confy::store("cpt", Some("cpt"), self) {
+        if let Err(e) = config_path(Some("cpt")).and_then(|p| confy::store_path(p, self)) {
             log::warn!("failed to save session config: {}", e);
         }
     }

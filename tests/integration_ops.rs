@@ -17,10 +17,11 @@ use tokio::sync::mpsc;
 // ── helpers ──────────────────────────────────────────────────
 
 fn tempdir(prefix: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("cpt_it_{}", prefix));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .unwrap()
+        .keep()
 }
 
 fn drain<T>(rx: &mut mpsc::UnboundedReceiver<T>) -> Vec<T> {
