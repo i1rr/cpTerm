@@ -16,8 +16,20 @@ pub fn draw_status_bar(
     dual_pane: &DualPane,
     input_mode: &InputMode,
     connecting_to: Option<&str>,
+    progress: Option<&str>,
     theme: &Theme,
 ) {
+    let mut area = area;
+    if let Some(progress) = progress {
+        let width = area.width.min(progress.len() as u16 + 1);
+        area.width -= width;
+        let badge = Rect::new(area.right(), area.y, width, area.height);
+        frame.render_widget(
+            Paragraph::new(progress)
+                .style(Style::default().fg(theme.selection_fg).bg(theme.status_bg)),
+            badge,
+        );
+    }
     // Connecting to SSH - show indicator regardless of pane type.
     if let Some(host) = connecting_to {
         let paragraph = Paragraph::new(Line::from(vec![Span::styled(

@@ -73,11 +73,13 @@ pub enum Action {
     FilterCancel,
     // Async feedback
     OperationProgress {
+        id: u64,
         done: u64,
         total: u64,
     },
-    OperationComplete(String),
-    OperationError(String),
+    OperationComplete(u64, String),
+    OperationError(u64, String),
+    DownloadFinished(Result<String, String>),
     // UI
     ShowHelp,
     DismissDialog,

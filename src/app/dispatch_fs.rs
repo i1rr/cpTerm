@@ -7,19 +7,55 @@ use crate::fs::ops;
 use super::{App, InputMode, PendingOp};
 
 impl App {
+    fn start_file_operation(
+        &mut self,
+        verb: &'static str,
+        total: usize,
+        new_files: Vec<PathBuf>,
+    ) -> ops::OperationEvents {
+        let events = ops::OperationEvents::from(self.action_tx.clone());
+        self.file_operations.insert(
+            events.id,
+            super::FileProgress {
+                verb,
+                done: 0,
+                total: total as u64,
+                new_files,
+            },
+        );
+        events
+    }
+
+    fn copy_files(
+        &mut self,
+        pairs: Vec<(PathBuf, PathBuf)>,
+        overwrites: std::collections::HashSet<PathBuf>,
+    ) {
+        let events = self.start_file_operation(
+            "Copying",
+            pairs.len(),
+            pairs.iter().map(|(_, t)| t.clone()).collect(),
+        );
+        tokio::spawn(ops::copy_entries_with_overwrites(pairs, overwrites, events));
+    }
+
     pub(super) fn execute_op(&mut self, op: PendingOp) {
         let tx = self.action_tx.clone();
         match op {
             PendingOp::Copy { pairs, .. } => {
-                self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
-                tokio::spawn(ops::copy_entries(pairs, tx));
+                self.copy_files(pairs, Default::default());
             }
-            PendingOp::Move { ref pairs } => {
-                self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
-                tokio::spawn(ops::move_entries(pairs.clone(), tx));
+            PendingOp::Move { pairs } => {
+                let events = self.start_file_operation(
+                    "Moving",
+                    pairs.len(),
+                    pairs.iter().map(|(_, t)| t.clone()).collect(),
+                );
+                tokio::spawn(ops::move_entries(pairs, events));
             }
             PendingOp::Delete(sources) => {
-                tokio::spawn(ops::delete_entries(sources, tx));
+                let events = self.start_file_operation("Deleting", sources.len(), Vec::new());
+                tokio::spawn(ops::delete_entries(sources, events));
             }
             // CloseEditor is handled in ConfirmDialog dispatch directly; not routed here.
             PendingOp::CloseEditor => {}
@@ -69,14 +105,12 @@ impl App {
                             errors.push(e);
                         }
                     }
-                    if errors.is_empty() {
-                        let _ = tx.send(Action::OperationComplete(format!(
-                            "Downloaded {} item(s)",
-                            total
-                        )));
+                    let result = if errors.is_empty() {
+                        Ok(format!("Downloaded {total} item(s)"))
                     } else {
-                        let _ = tx.send(Action::OperationError(errors.join("; ")));
-                    }
+                        Err(errors.join("; "))
+                    };
+                    let _ = tx.send(Action::DownloadFinished(result));
                 });
             }
             PendingOp::RemoteUpload {
@@ -452,12 +486,7 @@ impl App {
             Action::ConflictOverwrite => {
                 if let Some(op) = self.pending_op.take() {
                     if let PendingOp::Copy { pairs, conflicts } = op {
-                        self.pending_new_files = pairs.iter().map(|(_, t)| t.clone()).collect();
-                        tokio::spawn(ops::copy_entries_with_overwrites(
-                            pairs,
-                            conflicts,
-                            self.action_tx.clone(),
-                        ));
+                        self.copy_files(pairs, conflicts);
                     } else {
                         self.execute_op(op);
                     }
@@ -579,21 +608,35 @@ impl App {
                 }
                 true
             }
-            Action::OperationComplete(msg) => {
-                let new_files = std::mem::take(&mut self.pending_new_files);
+            Action::OperationComplete(id, msg) => {
                 self.dual_pane.refresh_both();
-                if !new_files.is_empty() {
-                    self.dual_pane.mark_new_files(&new_files);
+                if let Some(op) = self.file_operations.remove(&id) {
+                    self.dual_pane.mark_new_files(&op.new_files);
                 }
                 self.dialog = Some(Dialog::info(msg));
                 true
             }
-            Action::OperationError(msg) => {
+            Action::OperationError(id, msg) => {
+                self.file_operations.remove(&id);
                 self.dual_pane.refresh_both();
                 self.dialog = Some(Dialog::error(msg));
                 true
             }
-            Action::OperationProgress { .. } => true,
+            Action::OperationProgress { id, done, total } => {
+                if let Some(op) = self.file_operations.get_mut(&id) {
+                    op.done = done;
+                    op.total = total;
+                }
+                true
+            }
+            Action::DownloadFinished(result) => {
+                self.dual_pane.refresh_both();
+                self.dialog = Some(match result {
+                    Ok(msg) => Dialog::info(msg),
+                    Err(msg) => Dialog::error(msg),
+                });
+                true
+            }
             Action::RemoteDownload => {
                 if let Some(op) = self.pending_op.take() {
                     self.execute_op(op);

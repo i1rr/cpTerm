@@ -8,6 +8,40 @@ use crate::action::Action;
 mod move_cleanup;
 use move_cleanup::MoveCleanup;
 
+#[derive(Clone)]
+pub struct OperationEvents {
+    pub(crate) id: u64,
+    tx: mpsc::UnboundedSender<Action>,
+}
+
+impl From<mpsc::UnboundedSender<Action>> for OperationEvents {
+    fn from(tx: mpsc::UnboundedSender<Action>) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            tx,
+        }
+    }
+}
+
+impl OperationEvents {
+    fn progress(&self, done: u64, total: u64) {
+        let _ = self.tx.send(Action::OperationProgress {
+            id: self.id,
+            done,
+            total,
+        });
+    }
+
+    fn complete(&self, msg: String) {
+        let _ = self.tx.send(Action::OperationComplete(self.id, msg));
+    }
+    fn error(&self, msg: String) {
+        let _ = self.tx.send(Action::OperationError(self.id, msg));
+    }
+}
+
 /// Build (source, target) pairs for a copy/move into dest_dir.
 pub fn build_pairs(sources: &[PathBuf], dest_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
     sources
@@ -93,26 +127,27 @@ pub fn rename_conflicts(pairs: &mut [(PathBuf, PathBuf)]) {
 }
 
 /// Copy a list of (source, target) pairs.
-pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+pub async fn copy_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: impl Into<OperationEvents>) {
     copy_entries_with_overwrites(pairs, HashSet::new(), tx).await;
 }
 
 pub async fn copy_entries_with_overwrites(
     pairs: Vec<(PathBuf, PathBuf)>,
     overwrites: HashSet<PathBuf>,
-    tx: mpsc::UnboundedSender<Action>,
+    tx: impl Into<OperationEvents>,
 ) {
+    let tx = tx.into();
     let errors = tx.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || copy_blocking(pairs, overwrites, tx)).await
     {
-        let _ = errors.send(Action::OperationError(format!("copy worker failed: {e}")));
+        errors.error(format!("copy worker failed: {e}"));
     }
 }
 
 fn copy_blocking(
     pairs: Vec<(PathBuf, PathBuf)>,
     overwrites: HashSet<PathBuf>,
-    tx: mpsc::UnboundedSender<Action>,
+    tx: OperationEvents,
 ) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
@@ -128,34 +163,28 @@ fn copy_blocking(
         match result {
             Ok(()) => {
                 done += 1;
-                let _ = tx.send(Action::OperationProgress { done, total });
+                tx.progress(done, total);
             }
             Err(e) => {
-                let _ = tx.send(Action::OperationError(format!(
-                    "Failed to copy {}: {}",
-                    src.display(),
-                    e
-                )));
+                tx.error(format!("Failed to copy {}: {}", src.display(), e));
                 return;
             }
         }
     }
 
-    let _ = tx.send(Action::OperationComplete(format!(
-        "Copied {} item(s)",
-        done
-    )));
+    tx.complete(format!("Copied {} item(s)", done));
 }
 
 /// Move a list of (source, target) pairs.
-pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+pub async fn move_entries(pairs: Vec<(PathBuf, PathBuf)>, tx: impl Into<OperationEvents>) {
+    let tx = tx.into();
     let errors = tx.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || move_blocking(pairs, tx)).await {
-        let _ = errors.send(Action::OperationError(format!("move worker failed: {e}")));
+        errors.error(format!("move worker failed: {e}"));
     }
 }
 
-fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Action>) {
+fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: OperationEvents) {
     let total = pairs.len() as u64;
     let mut done = 0u64;
 
@@ -178,31 +207,28 @@ fn move_blocking(pairs: Vec<(PathBuf, PathBuf)>, tx: mpsc::UnboundedSender<Actio
         match result {
             Ok(()) => {
                 done += 1;
-                let _ = tx.send(Action::OperationProgress { done, total });
+                tx.progress(done, total);
             }
             Err(e) => {
-                let _ = tx.send(Action::OperationError(format!(
-                    "Failed to move {}: {}",
-                    src.display(),
-                    e
-                )));
+                tx.error(format!("Failed to move {}: {}", src.display(), e));
                 return;
             }
         }
     }
 
-    let _ = tx.send(Action::OperationComplete(format!("Moved {} item(s)", done)));
+    tx.complete(format!("Moved {} item(s)", done));
 }
 
 /// Delete a list of files/dirs.
-pub async fn delete_entries(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Action>) {
+pub async fn delete_entries(sources: Vec<PathBuf>, tx: impl Into<OperationEvents>) {
+    let tx = tx.into();
     let errors = tx.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || delete_blocking(sources, tx)).await {
-        let _ = errors.send(Action::OperationError(format!("delete worker failed: {e}")));
+        errors.error(format!("delete worker failed: {e}"));
     }
 }
 
-fn delete_blocking(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Action>) {
+fn delete_blocking(sources: Vec<PathBuf>, tx: OperationEvents) {
     let total = sources.len() as u64;
     let mut done = 0u64;
 
@@ -216,23 +242,16 @@ fn delete_blocking(sources: Vec<PathBuf>, tx: mpsc::UnboundedSender<Action>) {
         match result {
             Ok(()) => {
                 done += 1;
-                let _ = tx.send(Action::OperationProgress { done, total });
+                tx.progress(done, total);
             }
             Err(e) => {
-                let _ = tx.send(Action::OperationError(format!(
-                    "Failed to delete {}: {}",
-                    src.display(),
-                    e
-                )));
+                tx.error(format!("Failed to delete {}: {}", src.display(), e));
                 return;
             }
         }
     }
 
-    let _ = tx.send(Action::OperationComplete(format!(
-        "Deleted {} item(s)",
-        done
-    )));
+    tx.complete(format!("Deleted {} item(s)", done));
 }
 
 fn linked(meta: &fs::Metadata) -> bool {

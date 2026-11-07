@@ -16,6 +16,7 @@ Single native binary. Some features use system tools.
 
 - Dual-pane navigation, arrow keys only
 - Copy / move / rename / delete with conflict resolution
+- Status-bar item counts for local copy, move and delete operations
 - Multi-select (Space, Ctrl+A) with size totals
 - Quick filter (Ctrl+F) on the active pane
 - Bookmarks panel (Ctrl+B), persisted to disk

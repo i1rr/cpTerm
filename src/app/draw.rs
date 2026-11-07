@@ -19,12 +19,20 @@ impl App {
             .split(frame.area());
 
         self.dual_pane.draw(frame, chunks[0], &self.theme);
+        let status = self.file_operations.first_key_value().map(|(_, op)| {
+            let mut text = format!("{} {} of {}", op.verb, op.done, op.total);
+            if self.file_operations.len() > 1 {
+                text.push_str(&format!(" (+{} more)", self.file_operations.len() - 1));
+            }
+            text
+        });
         draw_status_bar(
             frame,
             chunks[1],
             &self.dual_pane,
             &self.input_mode,
             self.connecting_to.as_deref(),
+            status.as_deref(),
             &self.theme,
         );
         let active_editor = self.dual_pane.active_editor().is_some();

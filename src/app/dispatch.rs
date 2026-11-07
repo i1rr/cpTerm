@@ -70,6 +70,16 @@ impl App {
             self.dispatch_ssh(action);
             return;
         }
+        if matches!(
+            &action,
+            Action::OperationProgress { .. }
+                | Action::OperationComplete(..)
+                | Action::OperationError(..)
+                | Action::DownloadFinished(_)
+        ) {
+            self.dispatch_fs(action);
+            return;
+        }
         if self.bookmark_panel.is_some() {
             let mut bp = self.bookmark_panel.take().unwrap();
             let (handled, keep) = self.dispatch_bookmark_panel(&mut bp, action.clone());

@@ -41,7 +41,7 @@ async fn overlapping_copies_preserve_source_data() {
     fs::hard_link(&source, &alias).unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     copy_entries(vec![(source.clone(), source.clone())], tx.clone()).await;
-    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_, _))));
     let pairs = vec![(source.clone(), alias.clone())];
     let approved = cpt::fs::ops::copy_conflicts(&pairs);
     cpt::fs::ops::copy_entries_with_overwrites(pairs, approved, tx.clone()).await;
@@ -50,11 +50,11 @@ async fn overlapping_copies_preserve_source_data() {
     assert!(
         drain(&mut rx)
             .iter()
-            .any(|a| matches!(a, Action::OperationComplete(_)))
+            .any(|a| matches!(a, Action::OperationComplete(_, _)))
     );
     let nested = dir.path().join("nested");
     copy_entries(vec![(dir.path().to_owned(), nested.clone())], tx).await;
-    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_, _))));
     assert!(!nested.exists());
 }
 
@@ -68,7 +68,7 @@ async fn approving_a_directory_merge_does_not_overwrite_a_late_child() {
     fs::write(dest.path().join("late"), "new arrival").unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     cpt::fs::ops::copy_entries_with_overwrites(pairs, approved, tx).await;
-    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_))));
+    assert!(matches!(rx.try_recv(), Ok(Action::OperationError(_, _))));
     assert_eq!(fs::read(dest.path().join("late")).unwrap(), b"new arrival");
 }
 
@@ -100,7 +100,7 @@ async fn move_across_filesystems_copies_the_tree_then_removes_its_source() {
     assert!(
         drain(&mut rx)
             .iter()
-            .any(|a| matches!(a, Action::OperationComplete(_)))
+            .any(|a| matches!(a, Action::OperationComplete(_, _)))
     );
     assert!(!tree.exists());
     assert_eq!(
@@ -189,9 +189,9 @@ async fn move_mixed_files_and_directory_emits_ordered_progress() {
     let mut errors = Vec::new();
     for msg in messages {
         match msg {
-            Action::OperationProgress { done, total } => progress.push((done, total)),
-            Action::OperationComplete(s) => completes.push(s),
-            Action::OperationError(e) => errors.push(e),
+            Action::OperationProgress { done, total, .. } => progress.push((done, total)),
+            Action::OperationComplete(_, s) => completes.push(s),
+            Action::OperationError(_, e) => errors.push(e),
             _ => {}
         }
     }

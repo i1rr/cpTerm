@@ -450,11 +450,11 @@ async fn copy_entries_emits_progress_then_complete_message() {
     let mut complete_msg = None;
     for msg in drain(&mut rx) {
         match msg {
-            Action::OperationProgress { done, total } => {
+            Action::OperationProgress { done, total, .. } => {
                 total_seen = total;
                 last_done = done;
             }
-            Action::OperationComplete(s) => complete_msg = Some(s),
+            Action::OperationComplete(_, s) => complete_msg = Some(s),
             _ => {}
         }
     }
@@ -487,8 +487,8 @@ async fn copy_entries_stops_on_first_error() {
     for msg in drain(&mut rx) {
         match msg {
             Action::OperationProgress { .. } => progress += 1,
-            Action::OperationError(_) => errors += 1,
-            Action::OperationComplete(_) => completed = true,
+            Action::OperationError(_, _) => errors += 1,
+            Action::OperationComplete(_, _) => completed = true,
             _ => {}
         }
     }
@@ -577,7 +577,7 @@ async fn delete_entries_removes_files_and_directories() {
 
     let mut count_msg = None;
     for msg in drain(&mut rx) {
-        if let Action::OperationComplete(s) = msg {
+        if let Action::OperationComplete(_, s) = msg {
             count_msg = Some(s);
         }
     }
@@ -605,14 +605,14 @@ async fn ops_report_error_for_missing_sources() {
     .await;
     let move_err = drain(&mut rx)
         .into_iter()
-        .any(|m| matches!(m, Action::OperationError(_)));
+        .any(|m| matches!(m, Action::OperationError(_, _)));
     assert!(move_err, "move should report error for missing source");
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     delete_entries(vec![PathBuf::from("/nonexistent_del_xyz")], tx).await;
     let del_err = drain(&mut rx)
         .into_iter()
-        .any(|m| matches!(m, Action::OperationError(_)));
+        .any(|m| matches!(m, Action::OperationError(_, _)));
     assert!(del_err, "delete should report error for missing source");
 
     fs::remove_dir_all(&dst).ok();

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -35,6 +35,13 @@ pub struct BackgroundedSession {
     pub last_path: String,
 }
 
+struct FileProgress {
+    verb: &'static str,
+    done: u64,
+    total: u64,
+    new_files: Vec<PathBuf>,
+}
+
 pub struct App {
     pub dual_pane: DualPane,
     pub input_mode: InputMode,
@@ -52,8 +59,7 @@ pub struct App {
     task_tx: mpsc::Sender<Action>,
     task_rx: mpsc::Receiver<Action>,
     pending_op: Option<PendingOp>,
-    /// Paths that should be highlighted as "new" after the current operation completes.
-    pending_new_files: Vec<PathBuf>,
+    file_operations: BTreeMap<u64, FileProgress>,
     /// Snapshot of files before archive extraction, for diffing after.
     pre_extract_snapshot: Option<(PathBuf, std::collections::HashSet<PathBuf>)>,
     /// Host currently being connected to (shown in status bar while async SSH connects).
@@ -102,7 +108,7 @@ impl App {
             task_tx,
             task_rx,
             pending_op: None,
-            pending_new_files: Vec::new(),
+            file_operations: BTreeMap::new(),
             pre_extract_snapshot: None,
             connecting_to: None,
             ssh_sessions: HashMap::new(),
@@ -217,7 +223,7 @@ mod tests {
             task_tx,
             task_rx,
             pending_op: None,
-            pending_new_files: Vec::new(),
+            file_operations: BTreeMap::new(),
             pre_extract_snapshot: None,
             connecting_to: None,
             ssh_sessions: HashMap::new(),
@@ -227,6 +233,58 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn status_line(app: &mut App) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..80).map(|x| buffer[(x, 22)].symbol()).collect()
+    }
+
+    #[tokio::test]
+    async fn status_bar_tracks_concurrent_batches_and_clears_after_success_or_error() {
+        let mut app = make_app();
+        let work = tempfile::tempdir().unwrap();
+        let src = work.path().join("source");
+        std::fs::write(&src, "contents").unwrap();
+        let pairs = (0..12)
+            .map(|i| (src.clone(), work.path().join(format!("out{i}"))))
+            .collect();
+        app.execute_op(PendingOp::Copy {
+            pairs,
+            conflicts: Default::default(),
+        });
+        app.execute_op(PendingOp::Delete(vec![work.path().join("missing")]));
+        assert!(status_line(&mut app).contains("Copying 0 of 12 (+1 more)"));
+        let mut saw_three = false;
+        while !app.file_operations.is_empty() {
+            let event = app.action_rx.recv().await.unwrap();
+            let third = matches!(event, Action::OperationProgress { done: 3, .. });
+            app.dispatch(event);
+            if third {
+                assert!(status_line(&mut app).contains("Copying 3 of 12"));
+                saw_three = true;
+            }
+        }
+        assert!(saw_three);
+        assert!(!status_line(&mut app).contains("Copying "));
+
+        app.execute_op(PendingOp::Move {
+            pairs: vec![(src.clone(), work.path().join("moved"))],
+        });
+        assert!(status_line(&mut app).contains("Moving 0 of 1"));
+        while !app.file_operations.is_empty() {
+            let event = app.action_rx.recv().await.unwrap();
+            app.dispatch(event);
+        }
+        app.execute_op(PendingOp::Delete(vec![src])); // already moved
+        assert!(status_line(&mut app).contains("Deleting 0 of 1"));
+        let error = app.action_rx.recv().await.unwrap();
+        assert!(matches!(error, Action::OperationError(..)));
+        app.dispatch(error);
+        assert!(!status_line(&mut app).contains("Deleting"));
     }
 
     #[tokio::test]
@@ -244,7 +302,7 @@ mod tests {
         app.dispatch(Action::ConfirmDialog);
         let result = app.action_rx.recv().await.unwrap();
         assert_eq!(std::fs::read_to_string(target).unwrap(), "arrived later");
-        assert!(matches!(result, Action::OperationError(_)));
+        assert!(matches!(result, Action::OperationError(_, _)));
     }
 
     #[test]
