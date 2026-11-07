@@ -73,6 +73,7 @@ impl App {
         if matches!(
             &action,
             Action::OperationProgress { .. }
+                | Action::CopyFileProgress { .. }
                 | Action::OperationComplete(..)
                 | Action::OperationError(..)
                 | Action::DownloadFinished(_)

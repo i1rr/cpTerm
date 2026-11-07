@@ -39,6 +39,7 @@ struct FileProgress {
     verb: &'static str,
     done: u64,
     total: u64,
+    current: Option<crate::action::CopyBytes>,
     new_files: Vec<PathBuf>,
 }
 
@@ -288,10 +289,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn f5_shows_current_file_bytes_without_counting_the_directory_twice() {
+        let source = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        let folder = source.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        let data = (0..16 * 1024 * 1024 + 37)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
+        for name in ["first.bin", "second.bin"] {
+            std::fs::write(folder.join(name), &data).unwrap();
+        }
+        let mut app = make_app();
+        app.dual_pane = DualPane::new(source.path().into(), dest.path().into(), PaneSide::Left);
+        app.dual_pane.active_explorer_mut().unwrap().cursor = 1;
+        app.dispatch(Action::CopySelected);
+        app.dispatch(Action::ConfirmDialog);
+
+        let mut completed_files = 0;
+        let mut last = None;
+        let mut current_name = None;
+        let mut saw_partial = false;
+        while !app.file_operations.is_empty() {
+            let event = app.action_rx.recv().await.unwrap();
+            app.dispatch(event.clone());
+            match event {
+                Action::CopyFileProgress {
+                    current: Some(file),
+                    ..
+                } => {
+                    assert_eq!(file.total, data.len() as u64);
+                    if let Some(prev) = last {
+                        assert!(prev < file.copied && file.copied <= file.total);
+                        assert_eq!(current_name.as_ref(), Some(&file.name));
+                    } else {
+                        assert_eq!(file.copied, 0);
+                        current_name = Some(file.name.clone());
+                    }
+                    let status = status_line(&mut app);
+                    assert!(
+                        status.contains(&format!(
+                            "Copying 0 of 1 | {} / {}  {}",
+                            crate::util::format_size(file.copied),
+                            crate::util::format_size(file.total),
+                            file.name
+                        )),
+                        "{status}"
+                    );
+                    saw_partial |= file.copied > 0 && file.copied < file.total;
+                    last = Some(file.copied);
+                }
+                Action::CopyFileProgress { current: None, .. } => {
+                    assert_eq!(last.take(), Some(data.len() as u64));
+                    assert!(!status_line(&mut app).contains(".bin"));
+                    completed_files += 1;
+                }
+                Action::OperationProgress { done, total, .. } => {
+                    assert_eq!((done, total), (1, 1));
+                    assert_eq!(completed_files, 2);
+                    assert!(status_line(&mut app).contains("Copying 1 of 1"));
+                }
+                Action::OperationError(_, msg) => panic!("{msg}"),
+                _ => {}
+            }
+        }
+        assert!(
+            saw_partial,
+            "expected an update before the end of a large file"
+        );
+        assert_eq!(completed_files, 2);
+        assert!(!status_line(&mut app).contains("Copying "));
+        for name in ["first.bin", "second.bin"] {
+            assert!(std::fs::read(dest.path().join("folder").join(name)).unwrap() == data);
+        }
+    }
+
+    #[tokio::test]
     async fn f5_preserves_a_file_created_after_the_conflict_check() {
         let source = tempfile::tempdir().unwrap();
         let dest = tempfile::tempdir().unwrap();
-        std::fs::write(source.path().join("report"), "copy").unwrap();
+        std::fs::write(source.path().join("report"), vec![42; 1024 * 1024]).unwrap();
         let mut app = make_app();
         app.dual_pane = DualPane::new(source.path().into(), dest.path().into(), PaneSide::Left);
         app.dual_pane.active_explorer_mut().unwrap().cursor = 1;
@@ -300,9 +377,18 @@ mod tests {
         let target = dest.path().join("report");
         std::fs::write(&target, "arrived later").unwrap();
         app.dispatch(Action::ConfirmDialog);
-        let result = app.action_rx.recv().await.unwrap();
+        loop {
+            let event = app.action_rx.recv().await.unwrap();
+            let failed = matches!(event, Action::OperationError(..));
+            assert!(!matches!(event, Action::OperationComplete(..)));
+            app.dispatch(event);
+            if failed {
+                break;
+            }
+        }
         assert_eq!(std::fs::read_to_string(target).unwrap(), "arrived later");
-        assert!(matches!(result, Action::OperationError(_, _)));
+        assert_eq!(std::fs::read_dir(dest.path()).unwrap().count(), 1);
+        assert!(!status_line(&mut app).contains("Copying "));
     }
 
     #[test]

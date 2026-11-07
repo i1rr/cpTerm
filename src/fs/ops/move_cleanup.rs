@@ -43,9 +43,13 @@ impl MoveCleanup {
             )?,
             entries: Vec::new(),
         };
-        super::copy_tree(src, dest, &|_| true, &mut |src, is_dir| {
-            plan.record(src, is_dir)
-        })?;
+        super::copy_tree(
+            src,
+            dest,
+            &|_| true,
+            &mut |src, is_dir| plan.record(src, is_dir),
+            None,
+        )?;
         Ok(plan)
     }
 

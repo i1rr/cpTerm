@@ -24,6 +24,15 @@ impl App {
             if self.file_operations.len() > 1 {
                 text.push_str(&format!(" (+{} more)", self.file_operations.len() - 1));
             }
+            if let Some(file) = &op.current {
+                use crate::util::format_size;
+                text.push_str(&format!(
+                    " | {} / {}  {}",
+                    format_size(file.copied),
+                    format_size(file.total),
+                    file.name
+                ));
+            }
             text
         });
         draw_status_bar(

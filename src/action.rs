@@ -3,6 +3,13 @@ use std::sync::Arc;
 
 use crate::config::PaneSide;
 
+#[derive(Debug, Clone)]
+pub struct CopyBytes {
+    pub name: String,
+    pub copied: u64,
+    pub total: u64,
+}
+
 /// All application actions (messages).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -76,6 +83,10 @@ pub enum Action {
         id: u64,
         done: u64,
         total: u64,
+    },
+    CopyFileProgress {
+        id: u64,
+        current: Option<CopyBytes>,
     },
     OperationComplete(u64, String),
     OperationError(u64, String),

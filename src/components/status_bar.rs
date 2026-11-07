@@ -21,7 +21,7 @@ pub fn draw_status_bar(
 ) {
     let mut area = area;
     if let Some(progress) = progress {
-        let width = area.width.min(progress.len() as u16 + 1);
+        let width = (Line::from(progress).width() + 1).min(area.width as usize) as u16;
         area.width -= width;
         let badge = Rect::new(area.right(), area.y, width, area.height);
         frame.render_widget(

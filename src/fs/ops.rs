@@ -5,6 +5,7 @@ use std::{fs, io};
 use tokio::sync::mpsc;
 
 use crate::action::Action;
+mod copy_progress;
 mod move_cleanup;
 use move_cleanup::MoveCleanup;
 
@@ -158,6 +159,7 @@ fn copy_blocking(
             target,
             &|path| overwrites.contains(path),
             &mut |_, _| Ok(()),
+            Some(&tx),
         );
 
         match result {
@@ -269,6 +271,7 @@ fn copy_tree(
     dest: &Path,
     can_replace: &dyn Fn(&Path) -> bool,
     inspect_source: &mut dyn FnMut(&Path, bool) -> io::Result<()>,
+    events: Option<&OperationEvents>,
 ) -> io::Result<()> {
     let source = fs::canonicalize(src)?;
     let parent = fs::canonicalize(
@@ -284,7 +287,7 @@ fn copy_tree(
             "cannot copy an item onto or inside itself",
         ));
     }
-    copy_item(src, dest, can_replace, inspect_source)
+    copy_item(src, dest, can_replace, inspect_source, events)
 }
 
 fn copy_item(
@@ -292,6 +295,7 @@ fn copy_item(
     dest: &Path,
     can_replace: &dyn Fn(&Path) -> bool,
     inspect_source: &mut dyn FnMut(&Path, bool) -> io::Result<()>,
+    events: Option<&OperationEvents>,
 ) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if linked(&meta) || dest.symlink_metadata().is_ok_and(|m| linked(&m)) {
@@ -313,6 +317,7 @@ fn copy_item(
                 &dest.join(entry.file_name()),
                 can_replace,
                 inspect_source,
+                events,
             )?;
         }
     } else if meta.is_file() {
@@ -321,7 +326,11 @@ fn copy_item(
             dest.parent()
                 .ok_or_else(|| io::Error::other("missing destination parent"))?,
         )?;
-        fs::copy(src, tmp.path())?;
+        if let Some(events) = events.filter(|_| meta.len() >= copy_progress::MIN_SIZE) {
+            copy_progress::copy(src, &tmp, meta.len(), events)?;
+        } else {
+            fs::copy(src, tmp.path())?;
+        }
         if can_replace(dest) {
             tmp.persist(dest)?;
         } else {

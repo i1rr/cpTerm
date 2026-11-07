@@ -20,6 +20,7 @@ impl App {
                 verb,
                 done: 0,
                 total: total as u64,
+                current: None,
                 new_files,
             },
         );
@@ -620,6 +621,12 @@ impl App {
                 self.file_operations.remove(&id);
                 self.dual_pane.refresh_both();
                 self.dialog = Some(Dialog::error(msg));
+                true
+            }
+            Action::CopyFileProgress { id, current } => {
+                if let Some(op) = self.file_operations.get_mut(&id) {
+                    op.current = current;
+                }
                 true
             }
             Action::OperationProgress { id, done, total } => {

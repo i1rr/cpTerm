@@ -605,6 +605,7 @@ dependencies = [
  "crossterm 0.29.0",
  "flate2",
  "getrandom 0.4.3",
+ "libc",
  "log",
  "open",
  "ratatui",
@@ -618,6 +619,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "unicode-width",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

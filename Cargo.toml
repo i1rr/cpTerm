@@ -28,5 +28,11 @@ zip = { version = "=9.4.1", default-features = false, features = ["deflate-flate
 cap-std = "4"
 cap-fs-ext = { version = "4", default-features = false, features = ["std"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [profile.release]
 lto = true
