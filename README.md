@@ -28,13 +28,55 @@ Single native binary. Some features use system tools.
 - Async task runner with live output window
 - Session restore on launch
 
-## Build
+## Download and run
+
+Download a ready-to-run binary from the [latest stable release](https://github.com/i1rr/cpTerm/releases/latest).
+No Rust installation is needed. Extract the archive and run `cpt` in a 256-color terminal.
+
+| Platform | Download |
+|----------|----------|
+| Windows x64 | [ZIP](https://github.com/i1rr/cpTerm/releases/latest/download/cpt-windows-x86_64.zip) |
+| Linux x64 (glibc 2.35+, including Ubuntu 22.04+) | [tar.gz](https://github.com/i1rr/cpTerm/releases/latest/download/cpt-linux-x86_64.tar.gz) |
+| macOS 13+ (Apple silicon) | [tar.gz](https://github.com/i1rr/cpTerm/releases/latest/download/cpt-macos-aarch64.tar.gz) |
+| macOS 13+ (Intel) | [tar.gz](https://github.com/i1rr/cpTerm/releases/latest/download/cpt-macos-x86_64.tar.gz) |
+
+On Windows, open PowerShell in the extracted folder and run `.\cpt.exe`.
+On Linux and macOS, run `./cpt` from the extracted folder. Move the executable
+to a directory on your `PATH` to use `cpt` from anywhere.
+
+Each release includes `SHA256SUMS`; archives include `BUILD.json` with the
+version, source commit and target. Verify an archive with
+`sha256sum -c SHA256SUMS --ignore-missing` on Linux, `shasum -a 256 <archive>` on macOS, or
+`Get-FileHash <archive> -Algorithm SHA256` in PowerShell, comparing the result
+with `SHA256SUMS`. Binaries are currently unsigned and macOS builds are not
+notarized, so your OS may request approval before the first launch.
+
+For the newest changes, see [preview releases](https://github.com/i1rr/cpTerm/releases).
+SSH and some archive formats still need the system tools described below.
+
+## Build from source
 
 Requires Rust stable (edition 2024) and a 256-color terminal.
 
 ```sh
 cargo build --release --locked
 ```
+
+## Automated releases
+
+Every push to `master` runs the dependency audit, formatting, Clippy and tests
+on Linux, macOS and Windows, plus Linux terminal and SFTP integration checks.
+Only after those pass does CI build and smoke-test all four release binaries.
+It uploads every archive and checksums to a draft, then publishes the complete
+release with generated notes. Pull requests and scheduled audits never publish.
+
+The first passing push for a new `Cargo.toml` version publishes `v<version>`
+as the latest stable release. Further pushes with that version publish uniquely
+tagged `v<version>-dev.<run-id>` previews without changing the stable download.
+Reruns preserve published assets and can finish an interrupted draft upload.
+To ship the next stable release, bump the package version in `Cargo.toml` and
+its local package entry in `Cargo.lock` before pushing. No manual tagging,
+personal access token or AI API key is required.
 
 ## Usage
 

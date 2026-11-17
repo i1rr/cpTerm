@@ -38,6 +38,21 @@ credentials or access that you do not have.
 - Use [README.md](README.md) for shortcuts, supported transfers and config
   locations. The manifest and lockfile are authoritative for dependencies.
 
+## Releases
+
+- `.github/workflows/rust.yml` publishes native downloads only after all CI checks
+  pass on a push to master. Do not bypass checks or upload local builds manually.
+- For an independently useful user-facing fix or feature, increment the patch
+  version in `Cargo.toml` and update the local `cpt` entry in `Cargo.lock` in the
+  same commit. Choose a minor version for substantial compatible features; ask
+  before a major version or a breaking change. Documentation and CI-only changes
+  keep the existing version and receive preview builds after a stable exists.
+- A previously unreleased manifest version becomes the latest stable release;
+  other pushes become uniquely tagged previews. Never move release tags or
+  replace published assets. Use a workflow rerun to finish a failed draft upload.
+- Verify the release job, all four downloadable archives and `SHA256SUMS` after
+  pushing. Report release failures along with CI failures.
+
 ## Verification
 
 Run the exact CI commands:
