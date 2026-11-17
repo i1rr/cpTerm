@@ -64,6 +64,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rustflags: '-D warnings -C target-feature=+crt-static'
           - os: macos-15-intel
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -72,12 +73,25 @@ jobs:
     timeout-minutes: 45
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
+      RUSTFLAGS: ${{ matrix.rustflags || '-D warnings' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
       - run: cargo +stable build --release --locked --target ${{ matrix.target }}
+      - name: Check Windows runtime independence
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'Cannot locate dumpbin to inspect runtime dependencies' }
+          $imports = & $dumpbin /dependents target/x86_64-pc-windows-msvc/release/cpt.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Windows binary' }
+          if ($imports -match '(?i)\b(VCRUNTIME|MSVCP|MSVCR)\w*\.dll') {
+            throw 'Windows download must not require a separate Visual C++ runtime'
+          }
       - name: Package and smoke-test the release binary
         run: python3 .github/scripts/release.py package ${{ matrix.target }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -41,6 +41,7 @@ No Rust installation is needed. Extract the archive and run `cpt` in a 256-color
 | macOS 13+ (Intel) | [tar.gz](https://github.com/i1rr/cpTerm/releases/latest/download/cpt-macos-x86_64.tar.gz) |
 
 On Windows, open PowerShell in the extracted folder and run `.\cpt.exe`.
+The Windows download includes the C runtime; no Visual C++ runtime installation is needed.
 On Linux and macOS, run `./cpt` from the extracted folder. Move the executable
 to a directory on your `PATH` to use `cpt` from anywhere.
 
