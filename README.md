@@ -83,6 +83,12 @@ personal access token or AI API key is required.
 
 ## Dependency security
 
+Local copies walk open directory handles and reject source and destination
+links. File contents are staged in the opened destination directory and
+published only after copying succeeds, so replacing a directory pathname
+cannot redirect a later write. Windows copies preserve alternate data streams,
+including download origin information, and file attributes.
+
 Builds use the reviewed versions and registry checksums in `Cargo.lock` with
 `--locked`. Dependency updates have a three-day publication cooldown configured
 in `.cargo/config.toml` (requires Cargo 1.100+), giving newly published releases

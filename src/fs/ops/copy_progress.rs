@@ -2,7 +2,7 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use tempfile::NamedTempFile;
+use std::fs::File;
 
 use super::OperationEvents;
 use crate::action::{Action, CopyBytes};
@@ -10,17 +10,19 @@ use crate::action::{Action, CopyBytes};
 pub(super) const MIN_SIZE: u64 = 1024 * 1024;
 
 struct Reporter<'a> {
-    events: &'a OperationEvents,
+    events: Option<&'a OperationEvents>,
     bytes: CopyBytes,
     last_sent: Option<Instant>,
 }
 
 impl Reporter<'_> {
     fn send(&self) {
-        let _ = self.events.tx.send(Action::CopyFileProgress {
-            id: self.events.id,
-            current: Some(self.bytes.clone()),
-        });
+        if let Some(events) = self.events {
+            let _ = events.tx.send(Action::CopyFileProgress {
+                id: events.id,
+                current: Some(self.bytes.clone()),
+            });
+        }
     }
 
     fn update(&mut self, copied: u64, total: u64) {
@@ -42,9 +44,9 @@ impl Reporter<'_> {
 
 pub(super) fn copy(
     src: &Path,
-    tmp: &NamedTempFile,
-    total: u64,
-    events: &OperationEvents,
+    input: &File,
+    output: &File,
+    events: Option<&OperationEvents>,
 ) -> io::Result<()> {
     let name = src
         .file_name()
@@ -56,39 +58,40 @@ pub(super) fn copy(
         bytes: CopyBytes {
             name,
             copied: 0,
-            total,
+            total: input.metadata()?.len(),
         },
         last_sent: None,
     };
     reporter.send();
-    transfer(src, tmp, &mut reporter)?;
-    let _ = events.tx.send(Action::CopyFileProgress {
-        id: events.id,
-        current: None,
-    });
+    transfer(input, output, &mut reporter)?;
+    if let Some(events) = events {
+        let _ = events.tx.send(Action::CopyFileProgress {
+            id: events.id,
+            current: None,
+        });
+    }
     Ok(())
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io::Result<()> {
-    use std::{fs::File, io::Read};
-    let mut input = File::open(src)?;
+fn transfer(mut input: &File, mut output: &File, progress: &mut Reporter<'_>) -> io::Result<()> {
+    use std::io::Read;
     let meta = input.metadata()?;
     let mut written = 0;
     loop {
-        let n = io::copy(&mut (&mut input).take(256 * 1024), &mut tmp.as_file())?;
+        let n = io::copy(&mut (&mut input).take(256 * 1024), &mut output)?;
         if n == 0 {
             break;
         }
         written += n;
         progress.update(written, meta.len());
     }
-    tmp.as_file().set_permissions(meta.permissions())
+    output.set_permissions(meta.permissions())
 }
 
 #[cfg(windows)]
-fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io::Result<()> {
-    use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr};
+fn transfer(input: &File, output: &File, progress: &mut Reporter<'_>) -> io::Result<()> {
+    use std::{ffi::c_void, ptr};
     use windows_sys::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{CopyFileExW, PROGRESS_CONTINUE},
@@ -109,15 +112,10 @@ fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io:
         progress.update(copied as u64, total as u64);
         PROGRESS_CONTINUE
     }
-    fn wide(path: &Path) -> io::Result<Vec<u16>> {
-        Ok(path
-            .canonicalize()?
-            .as_os_str()
-            .encode_wide()
-            .chain([0])
-            .collect())
-    }
-    let (src, dest) = (wide(src)?, wide(tmp.path())?);
+    let (src, dest) = (
+        super::staged_copy::final_path(input)?,
+        super::staged_copy::final_path(output)?,
+    );
     // Use the native copier to preserve alternate data streams and file attributes.
     let ok = unsafe {
         CopyFileExW(
@@ -137,10 +135,9 @@ fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io:
 }
 
 #[cfg(target_os = "macos")]
-fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io::Result<()> {
+fn transfer(input: &File, output: &File, progress: &mut Reporter<'_>) -> io::Result<()> {
     use std::{
         ffi::{c_char, c_void},
-        fs::File,
         os::fd::AsRawFd,
         ptr,
     };
@@ -173,7 +170,6 @@ fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io:
         }
         libc::COPYFILE_CONTINUE
     }
-    let input = File::open(src)?;
     // fcopyfile preserves ACLs, resource forks and extended attributes. All handles
     // and the callback context outlive the synchronous call.
     unsafe {
@@ -193,7 +189,7 @@ fn transfer(src: &Path, tmp: &NamedTempFile, progress: &mut Reporter<'_>) -> io:
             ) == 0
             && libc::fcopyfile(
                 input.as_raw_fd(),
-                tmp.as_file().as_raw_fd(),
+                output.as_raw_fd(),
                 state,
                 libc::COPYFILE_DATA | libc::COPYFILE_METADATA,
             ) == 0;

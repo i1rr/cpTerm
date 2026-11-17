@@ -35,6 +35,8 @@ credentials or access that you do not have.
 - `src/fs/` handles local operations, archives and drive discovery.
   Use disposable trees for destructive tests. Do not follow destination links
   during copies or interpolate paths into shell commands.
+  Keep copy traversal and publication anchored to open directory handles;
+  native copiers must use pinned file handles and preserve file metadata.
 - `src/ssh/session.rs` checks host keys and handles SFTP. The Linux CI fixture
   in `.github/scripts/test-sftp.sh` uses a disposable loopback server and keys.
 - `src/task.rs` streams subprocess output over a bounded channel.
