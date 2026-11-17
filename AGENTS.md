@@ -65,6 +65,9 @@ python3 .github/scripts/audit_lock.py
 ```
 
 The audit uses Python 3.11+ and sends public crate names and versions to OSV.
+The maintainer approved only the `chrono` maintenance notice `RUSTSEC-2026-0543`
+on 2026-11-17. The audit verifies its informational classification and keeps
+all other advisories blocking. Do not broaden this exception without approval.
 CI also opens the real binary in a terminal and runs the loopback SSH test on
 Linux. Confirm the final push passes on Linux, macOS and Windows. Commit messages
 use lowercase imperative subjects; avoid em dashes in text and commits.
