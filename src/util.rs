@@ -4,35 +4,31 @@ use chrono::{DateTime, Local};
 
 /// A name from an input field or remote server must stay inside its destination.
 pub fn valid_filename(name: &str) -> bool {
-    if name.is_empty()
+    let valid = !(name.is_empty()
         || matches!(name, "." | "..")
         || name.contains('/')
-        || name.chars().any(char::is_control)
-    {
-        return false;
-    }
+        || name.chars().any(char::is_control));
     #[cfg(windows)]
-    {
-        if name.contains(['\\', ':', '<', '>', '"', '|', '?', '*']) || name.ends_with([' ', '.']) {
-            return false;
-        }
+    let valid = {
         let base = name
             .split('.')
             .next()
             .unwrap_or("")
             .trim_end()
             .to_ascii_uppercase();
-        if matches!(
-            base.as_str(),
-            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-        ) || ["COM", "LPT"].iter().any(|p| {
-            base.strip_prefix(p)
-                .is_some_and(|n| n.chars().count() == 1 && "0123456789¹²³".contains(n))
-        }) {
-            return false;
-        }
-    }
-    true
+        valid
+            && !name.contains(['\\', ':', '<', '>', '"', '|', '?', '*'])
+            && !name.ends_with([' ', '.'])
+            && !matches!(
+                base.as_str(),
+                "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+            )
+            && !["COM", "LPT"].iter().any(|p| {
+                base.strip_prefix(p)
+                    .is_some_and(|n| n.chars().count() == 1 && "0123456789¹²³".contains(n))
+            })
+    };
+    valid
 }
 
 /// Canonicalize a path, stripping the Windows `\\?\` extended-length prefix.

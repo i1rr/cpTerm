@@ -21,7 +21,7 @@ use cpt::theme::{
 };
 use cpt::util::{
     clean_canonicalize, find_sevenzip, format_date, format_size, is_archive, is_text_file,
-    strip_unc_prefix,
+    strip_unc_prefix, valid_filename,
 };
 use ratatui::style::Color;
 use tokio::sync::mpsc;
@@ -67,6 +67,53 @@ fn drain<T>(rx: &mut mpsc::UnboundedReceiver<T>) -> Vec<T> {
 }
 
 // ── util: format ────────────────────────────────────────────
+
+#[test]
+fn valid_filename_rejects_traversal_and_control_characters() {
+    for name in [
+        "", ".", "..", "../file", "dir/file", "/file", "a\0b", "a\nb",
+    ] {
+        assert!(!valid_filename(name), "accepted {name:?}");
+    }
+    for name in ["file.txt", ".hidden", "two words", "café.txt"] {
+        assert!(valid_filename(name), "rejected {name:?}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn valid_filename_rejects_windows_devices_and_separators() {
+    for name in [
+        r"dir\file",
+        "C:file",
+        "file:stream",
+        "CON",
+        "con.txt",
+        "PRN",
+        "AUX",
+        "NUL",
+        "CONIN$",
+        "CONOUT$",
+        "COM1",
+        "com9.txt",
+        "LPT1",
+        "COM¹",
+        "LPT².txt",
+        "name.",
+        "name ",
+        "a<b",
+        "a>b",
+        "a\"b",
+        "a|b",
+        "a?b",
+        "a*b",
+    ] {
+        assert!(!valid_filename(name), "accepted {name:?}");
+    }
+    for name in ["COM10", "LPT10.txt", "console.txt"] {
+        assert!(valid_filename(name), "rejected {name:?}");
+    }
+}
 
 #[test]
 fn format_size_covers_unit_boundaries() {
