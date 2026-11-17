@@ -49,6 +49,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zip unzip openssh-server libarchive-tools
       - run: cargo +stable test --locked
       - if: runner.os == 'Linux'
+        run: python3 .github/scripts/test-no-hardlinks.py
+      - if: runner.os == 'Linux'
         run: python3 .github/scripts/test-terminal.py
       - if: runner.os == 'Linux'
         run: bash .github/scripts/test-sftp.sh

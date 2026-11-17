@@ -114,12 +114,36 @@ impl<'a> StagedCopy<'a> {
         if replace {
             self.parent.rename(&self.name, self.parent, name)?;
         } else {
-            self.parent.hard_link(&self.name, self.parent, name)?;
-            let _ = self.parent.remove_file(&self.name);
+            persist_noclobber(self.parent, &self.name, name)?;
         }
         self.published = true;
         Ok(())
     }
+}
+
+#[cfg(not(windows))]
+fn persist_noclobber(parent: &Dir, temporary: &str, destination: &OsStr) -> io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use rustix::fs::{RenameFlags, renameat_with};
+        // Unlike a hard-link publication, this also works on FAT/exFAT drives.
+        // Both operands are bare names relative to the already opened directory.
+        match renameat_with(
+            parent,
+            temporary,
+            parent,
+            destination,
+            RenameFlags::NOREPLACE,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(rustix::io::Errno::NOSYS) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    // Retain a safe fallback for platforms without an exclusive rename syscall.
+    parent.hard_link(temporary, parent, destination)?;
+    let _ = parent.remove_file(temporary);
+    Ok(())
 }
 
 impl Drop for StagedCopy<'_> {
