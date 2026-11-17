@@ -57,7 +57,9 @@ SSH and some archive formats still need the system tools described below.
 
 ## Build from source
 
-Requires Rust stable (edition 2024) and a 256-color terminal.
+Requires current Rust stable (minimum 1.100.0) and a 256-color terminal.
+The project uses the Rust 2024 language edition, which is the latest edition;
+the edition year is separate from the compiler version. CI tests current stable Rust.
 
 ```sh
 cargo build --release --locked
@@ -78,6 +80,21 @@ Reruns preserve published assets and can finish an interrupted draft upload.
 To ship the next stable release, bump the package version in `Cargo.toml` and
 its local package entry in `Cargo.lock` before pushing. No manual tagging,
 personal access token or AI API key is required.
+
+## Dependency security
+
+Builds use the reviewed versions and registry checksums in `Cargo.lock` with
+`--locked`. Dependency updates have a three-day publication cooldown configured
+in `.cargo/config.toml` (requires Cargo 1.100+), giving newly published releases
+time to be inspected before adoption. This delay applies to version resolution,
+not builds of existing locked versions. A targeted urgent security update can
+override it after review; the lockfile and advisory audit must still be checked.
+
+CI checks every locked registry package against OSV on every push, pull request
+and daily scheduled audit. All advisories block releases except the explicitly
+approved `chrono` maintenance notice `RUSTSEC-2026-0543`, whose informational
+classification is checked on each audit. A clean advisory scan cannot establish
+that a package is free from unknown vulnerabilities or malicious code.
 
 ## Usage
 

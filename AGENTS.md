@@ -20,6 +20,10 @@ credentials or access that you do not have.
   --all-features -- -D warnings, and cargo test --locked. Report any gaps.
 - Check dependency changes against current advisories, commit Cargo.lock, and
   exercise file operations in disposable directories, never against user data.
+- Use current stable Rust, at least 1.100.0. Keep the three-day registry update
+  cooldown in `.cargo/config.toml`. Review dependency changes before adopting
+  them; override the cooldown only for a targeted urgent security fix, document
+  the reason, and rerun the advisory audit. Do not make blanket exceptions.
 
 ## Project map
 
