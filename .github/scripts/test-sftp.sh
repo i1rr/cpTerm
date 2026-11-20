@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 # Run on a disposable Linux runner with OpenSSH server installed.
 set -euo pipefail
-fixture=$(mktemp -d)
+fixture=$(mktemp -d /tmp/cpt-sftp.XXXXXXXX)
 password_user="cpt-fixture-$$"
 password_user_created=false
+password_uid=""
 cleanup() {
     if [[ -s "$fixture/pid" ]]; then sudo kill "$(cat "$fixture/pid")" || true; fi
-    if $password_user_created; then sudo userdel "$password_user" || true; fi
-    rm -rf -- "$fixture"
+    if $password_user_created && [[ "$password_uid" =~ ^[1-9][0-9]*$ ]]; then
+        # PAM may leave a user manager alive after the SSH connection closes.
+        # This UID belongs only to the account created by this fixture.
+        sudo loginctl terminate-user "$password_user" || true
+        sudo pkill -KILL -u "$password_uid" || true
+        sudo userdel --force "$password_user" || true
+    fi
+    # The password account can create private cache files under its test home.
+    # Keep privileged deletion confined to the directory made above.
+    if [[ "$fixture" == /tmp/cpt-sftp.* && "$fixture" != */*/* ]]; then
+        sudo rm -rf -- "$fixture"
+    else
+        echo 'Refusing to remove an unexpected fixture path' >&2
+        return 1
+    fi
 }
 trap cleanup EXIT
 mkdir -p "$fixture/home/.ssh" "$fixture/remote"
@@ -15,6 +29,7 @@ mkdir "$fixture/password-home"
 chmod 711 "$fixture"
 sudo useradd --no-create-home --home-dir "$fixture/password-home" --shell /bin/sh "$password_user"
 password_user_created=true
+password_uid=$(id -u "$password_user")
 sudo chown "$password_user" "$fixture/password-home"
 password=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 printf '%s:%s\n' "$password_user" "$password" | sudo chpasswd
