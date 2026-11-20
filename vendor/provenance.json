@@ -1,0 +1,116 @@
+{
+  "russh-sftp": {
+    "version": "2.4.0",
+    "path": "vendor/russh-sftp-2.4.0",
+    "archive": "https://crates.io/api/v1/crates/russh-sftp/2.4.0/download",
+    "archive_sha256": "9de67aace74530a29086db0671fa200c470a58eb380081f28ad512ffb0c5356b",
+    "upstream_vcs": {
+      "git": {
+        "sha1": "e145c1f7ece99f41f558949ef59731f2cd1a9dfe"
+      },
+      "path_in_vcs": ""
+    },
+    "modified_or_added_files": [
+      "Cargo.toml",
+      "src/client/rawsession.rs",
+      "src/protocol/file.rs",
+      "src/utils.rs"
+    ],
+    "omitted_files": [
+      ".github/dependabot.yml",
+      ".github/workflows/audit.yml",
+      ".github/workflows/ci.yml",
+      ".gitignore",
+      "Cargo.lock",
+      "Cargo.toml.orig",
+      "benches/upload_benchmark.rs",
+      "deny.toml",
+      "examples/client.rs",
+      "examples/server.rs"
+    ],
+    "files": {
+      ".cargo_vcs_info.json": "79eb96d376086bc94d6235c8fca93bdea00f8ca75586f52ffe862f204ee2241b",
+      "Cargo.toml": "3ebbcbd9cc9250c338f398c2f1dfc5b1f4e788b5efa9b597a6fea6d9e78dcea7",
+      "LICENSE": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+      "README.md": "31b11ccdfbf19b106f01e459c89ab00c295b9dc4c7469965f9758e0429c56729",
+      "src/buf.rs": "d7e477dae86c47762635d7af269de871a7860b1e62fd7df56ff181d56fd908ec",
+      "src/client/error.rs": "3a6c56cff7ce29291df3bfb4298eed0f83a4b8c354fee9c3ed911983d7244fb4",
+      "src/client/fs/dir.rs": "c5a8f9096eb50a8cabef5d7f083046eb63027463f470df1c7c03f1e78579b322",
+      "src/client/fs/file.rs": "c4bb8cd2f88c61df1d80d3f5025684ee2c13aee8641b4ddf8f6f3601975bb1cb",
+      "src/client/fs/mod.rs": "805a162c7a3f127396ae8e7a846fa997bdb74b324cc7a9e8266864224bf02668",
+      "src/client/handler.rs": "c21c8b467a4fe82c398fcf6bb2e8a57b8d6e9a786ae2859d53e963e19e3639b1",
+      "src/client/mod.rs": "b90a4d8cd3026a5338846a6fcab9bff5ef5a984e181fc99268e70876974a1664",
+      "src/client/rawsession.rs": "a0d4e093f5d4426616f300f4eb1bce106e36e29c57171d43bfea9e433c09c5c6",
+      "src/client/runtime.rs": "d480e4372e2a6d1c7048e06ff95fbd8cef9c71dda5e6ac9c903fcc61fac347b5",
+      "src/client/session.rs": "38b4f679043d578c896a7e259f371fb1590f3ed0d9f49119fc0852134a070019",
+      "src/de.rs": "9f0e72c99b36d2b3fc7bdfa2864a6411adf7b26084ac8802781c7bed751aa63a",
+      "src/error.rs": "40dee8be18a1b599ba1dc13a91f3ce42508a235945e011edf7bf56f0f0e9c73e",
+      "src/extensions.rs": "af3ac80a3cf85d7721d9ffcfd140690d1232d43c9edec4d99c819468adc4ff14",
+      "src/lib.rs": "90ab73aed45ecaac7f77a32dd67a351152a716771c074ab56274eeb266ab57d1",
+      "src/protocol/attrs.rs": "ddaf8a605faf970bf3a67074c81b0de4a04490e4da4aae21e693c9ae3e619f9c",
+      "src/protocol/close.rs": "5cb0e3f2452a4d63ffa6b4d470a7ecc4939556fa33f6b59b8301a72aca597a73",
+      "src/protocol/data.rs": "ed7a66b15715400c6f8950fb7219326d0b0fc04b060ce673f714e472325bcc39",
+      "src/protocol/extended.rs": "4622b727a15388ba5fc8236ad44eabae1227bf4749a379b340ecd297c647a3d4",
+      "src/protocol/file.rs": "c4d6c2239ee4c6966f86ea69209ac8fa7dc4da1f3f6c448d0fbb050dd7e466e9",
+      "src/protocol/file_attrs.rs": "a15c835eb4da8754bc063e7988bb6cb1fe49d80a79969df1d71d41f43a451b7f",
+      "src/protocol/fsetstat.rs": "7f4f9dc651b3aa203de38d08b302ea6d035369c83856a1c62402d780eadc3032",
+      "src/protocol/fstat.rs": "65ca87be25808bb450bb73a2586962134ebb42726f297af48e9ac02934eb8867",
+      "src/protocol/handle.rs": "577a8116803e64689b1517f85b37096b5438ac793919d0cf483c3a9e1373b261",
+      "src/protocol/init.rs": "21e5a526ca747b151980619d886a44824617498730930565116450c46f3592bf",
+      "src/protocol/lstat.rs": "767cfd55eeb47924c55612f77bfed9e0486daa911159e01c5dd62be3e227c05f",
+      "src/protocol/mkdir.rs": "9a7ab9e07fb1bd447c2f4ded1fa92f533f19cccfd2e666574932b34e5590f1ee",
+      "src/protocol/mod.rs": "5e4ea6040e84d0a6588e8585b21f25d237733ce9821ebe203b0c1624a45d18c1",
+      "src/protocol/name.rs": "cb343f3ef56d0ae32000886bac2e4f2dbc489024a37e292b89ae4699de5d8c1e",
+      "src/protocol/open.rs": "9ecbd8a201a2828b2a9a253032ce565466386bd2de161a874e6dacda9ed0d9c7",
+      "src/protocol/opendir.rs": "fad601932b01ac9bffd37e6df41b3f6722826c7aee24c34b7e5be593fd2068be",
+      "src/protocol/read.rs": "3b2e01e7a577458a3bd813fd9ef4195b6fda9d4394ebdda9767187343b6aaa5c",
+      "src/protocol/readdir.rs": "2f9162367a97737382780dd219829195cd79f35813d9d8e0f6638e3a2365a481",
+      "src/protocol/readlink.rs": "7d7f0dd9ea3f81da757d1a66ade8c9ea0339382a36766576db76120ed66dd54d",
+      "src/protocol/realpath.rs": "74a6ec87dc3e2b9a0140956543648b7734177c591521d7fbffcc6e9d72164bd8",
+      "src/protocol/remove.rs": "277351576448709b886c96bc73a7840f6b08ff0a274b3dcbb51275b415f0e062",
+      "src/protocol/rename.rs": "b40ab496ac79abcfa502b344b299e56d509d67323b6272a39fb272f2729e4e76",
+      "src/protocol/rmdir.rs": "700809d494cacee04123705ed989d4f528a8267d13df4a7ee225e825f7a73a3f",
+      "src/protocol/setstat.rs": "261aab0483c6fb780591782baf445e3471e99f5de3c15ee73b285d5ef55341dd",
+      "src/protocol/stat.rs": "ee86f9139f546ff5b68b7f917f1db0eb777475e416ef96d818ea672a53d7415b",
+      "src/protocol/status.rs": "ef7058584d8333bb523cd5a1665b628a31f8a5a7d24f673f0ef15cc81d827a17",
+      "src/protocol/symlink.rs": "41a340d02f4aa8702acc2969ecfc915180a98cf18db4c36cf4ba490d9c3edcf2",
+      "src/protocol/version.rs": "c1e582cbbf71655b1ce929dbfb25b9ecd86629fd71f31b549692a1e69d074e79",
+      "src/protocol/write.rs": "00d9d0b87e450ca5af4a4a25918b42712780b96635d7c1c10c7fc95fc8d35cb9",
+      "src/ser.rs": "712e6044e65b737183474c82f61a5809f7db04cc7173c3b0b52ee98a850e1791",
+      "src/server/handler.rs": "2846d53d1f0d5d640f4e57806cd0c8a596ca39b6ede12ac422c1060a5d997f6e",
+      "src/server/mod.rs": "000c7d64556604d0d1c13da64d84dd3d46fc946974fbf8bf2440ddf0a6b21313",
+      "src/server/reply.rs": "0cb5ba46c02ce73dfa0f9ba07168a6e05c95e53fc0d1d07da6928a621d2112d0",
+      "src/utils.rs": "6adfc156fa9a9a4d0885755fead3aeded92750e02cb8a257fb49fc4d6dbf7d2b"
+    }
+  },
+  "russh-util": {
+    "version": "0.52.0",
+    "path": "vendor/russh-util-0.52.0",
+    "archive": "https://crates.io/api/v1/crates/russh-util/0.52.0/download",
+    "archive_sha256": "668424a5dde0bcb45b55ba7de8476b93831b4aa2fa6947e145f3b053e22c60b6",
+    "upstream_vcs": {
+      "git": {
+        "sha1": "3d09c20c52a542ffa327723d3a44cb1edd9b0ca4",
+        "dirty": true
+      },
+      "path_in_vcs": "russh-util"
+    },
+    "modified_or_added_files": [
+      "Cargo.toml",
+      "LICENSE",
+      "src/lib.rs",
+      "src/time.rs"
+    ],
+    "omitted_files": [
+      "Cargo.toml.orig"
+    ],
+    "files": {
+      ".cargo_vcs_info.json": "9bbeb373423fbca22bfa4967ae8c327bc0567a5934ffcf2e4c07716d85ecc17f",
+      "Cargo.toml": "f4aa0245357eb5f77b0b0cdf1589d0b757e8d31f53c4187eed1e4c2459964bbd",
+      "LICENSE": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+      "src/lib.rs": "09b6a622a2139c64992560ebf4e94fc8e287700757588bc9f3215a44f9e87e23",
+      "src/runtime.rs": "3a2c2b9fb87991ca9c373f295c67380b945bb3f6c6043e127f035b70b572130c",
+      "src/time.rs": "ab35109913c959f8a664b055fff31711588dac0647bea3d018b63da3499b1407"
+    }
+  }
+}

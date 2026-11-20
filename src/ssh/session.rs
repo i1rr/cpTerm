@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Local};
 use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
+use std::time::SystemTime;
 
 /// A single directory entry on a remote server.
 #[derive(Debug, Clone)]
@@ -11,7 +11,7 @@ pub struct RemoteEntry {
     pub remote_path: String,
     pub is_dir: bool,
     pub size: u64,
-    pub modified: Option<DateTime<Local>>,
+    pub modified: Option<SystemTime>,
     pub is_hidden: bool,
 }
 
@@ -200,9 +200,7 @@ impl SshSession {
                     .map(|p| p & 0o170000 == 0o040000)
                     .unwrap_or(false);
                 let size = meta.size.unwrap_or(0);
-                let modified = meta.mtime.and_then(|t| {
-                    DateTime::from_timestamp(t as i64, 0).map(|dt| dt.with_timezone(&Local))
-                });
+                let modified = meta.modified().ok();
                 let is_hidden = name.starts_with('.');
                 let remote_path = if path.ends_with('/') {
                     format!("{}{}", path, name)

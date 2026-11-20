@@ -42,6 +42,13 @@ def package(target):
                            "target": target}, indent=2).encode() + b"\n"
     files = {binary_name: binary.read_bytes(),
              "README.md": Path("README.md").read_bytes(), "BUILD.json": metadata}
+    vendors = json.loads(Path("vendor/provenance.json").read_text(encoding="utf-8"))
+    notices = "cpTerm includes the following modified Apache-2.0 SSH libraries.\n"
+    notices += "Patch details: https://github.com/i1rr/cpTerm/tree/master/vendor\n\n"
+    for name, vendor in sorted(vendors.items()):
+        notices += f"{name} {vendor['version']} (cpTerm patch)\n{vendor['archive']}\n\n"
+        notices += Path(vendor["path"], "LICENSE").read_text(encoding="utf-8") + "\n"
+    files["VENDORED-NOTICES.txt"] = notices.encode("utf-8")
     Path("dist").mkdir(exist_ok=True)
     output = Path("dist", archive_name)
     if output.suffix == ".zip":

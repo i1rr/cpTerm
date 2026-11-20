@@ -96,11 +96,14 @@ time to be inspected before adoption. This delay applies to version resolution,
 not builds of existing locked versions. A targeted urgent security update can
 override it after review; the lockfile and advisory audit must still be checked.
 
-CI checks every locked registry package against OSV on every push, pull request
-and daily scheduled audit. All advisories block releases except the explicitly
-approved `chrono` maintenance notice `RUSTSEC-2026-0543`, whose informational
-classification is checked on each audit. A clean advisory scan cannot establish
-that a package is free from unknown vulnerabilities or malicious code.
+CI checks every locked dependency against OSV on every push, pull request
+and daily scheduled audit. All advisories block releases without exceptions.
+`chrono` is absent from the complete dependency tree. File timestamps use
+`std::time`; the existing `time` dependency handles local calendar formatting.
+Two narrow [reviewed SSH patches](vendor/README.md) remove transitive `chrono`
+requirements. Their source hashes are checked and their original names and
+versions remain included in advisory scans. A clean advisory scan cannot
+establish that a package is free from unknown vulnerabilities or malicious code.
 
 ## Usage
 

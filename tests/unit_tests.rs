@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Local, TimeZone};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cpt::action::Action;
 use cpt::components::dialog::{Dialog, DialogKind};
@@ -53,7 +53,13 @@ fn dated_entry(name: &str, year: i32) -> FileEntry {
         path: PathBuf::from(name),
         is_dir: false,
         size: 0,
-        modified: Some(Local.with_ymd_and_hms(year, 1, 1, 0, 0, 0).unwrap()),
+        modified: Some(
+            time::Date::from_calendar_date(year, time::Month::January, 1)
+                .unwrap()
+                .midnight()
+                .assume_utc()
+                .into(),
+        ),
         is_hidden: false,
     }
 }
@@ -128,12 +134,100 @@ fn format_size_covers_unit_boundaries() {
 
 #[test]
 fn format_date_produces_expected_pattern() {
-    let dt: DateTime<Local> = Local::now();
+    let dt = SystemTime::now();
     let result = format_date(&dt);
-    assert_eq!(result.len(), 11);
+    assert!(result.len() == 11 || result.ends_with(" UTC"));
     assert_eq!(result.as_bytes()[2], b'-');
     assert_eq!(result.as_bytes()[5], b' ');
     assert_eq!(result.as_bytes()[8], b':');
+}
+
+#[cfg(unix)]
+#[test]
+fn format_date_observes_historical_dst_and_pre_epoch_dates() {
+    // Isolate TZ in a child process; changing the environment of parallel tests
+    // would be unsafe and could affect unrelated filesystem/SSH tests.
+    const CHILD: &str = "CPT_TEST_DATE_TIMEZONE";
+    if std::env::var_os(CHILD).is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "format_date_observes_historical_dst_and_pre_epoch_dates",
+            ])
+            .env(CHILD, "1")
+            .env("TZ", "America/New_York")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    assert_eq!(
+        format_date(&(UNIX_EPOCH + Duration::from_secs(1_710_053_940))),
+        "03-10 01:59"
+    );
+    assert_eq!(
+        format_date(&(UNIX_EPOCH + Duration::from_secs(1_710_054_000))),
+        "03-10 03:00"
+    );
+    assert_eq!(
+        format_date(&(UNIX_EPOCH - Duration::from_millis(1))),
+        "12-31 18:59"
+    );
+    assert_eq!(
+        format_date(&(UNIX_EPOCH + Duration::from_secs(1_709_227_800))),
+        "02-29 12:30"
+    );
+}
+
+#[test]
+fn sftp_timestamps_preserve_epoch_flooring_and_wire_wrapping() {
+    use russh_sftp::protocol::FileAttributes;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("timestamp");
+    let file = fs::File::create(&path).unwrap();
+    for (timestamp, expected) in [
+        (UNIX_EPOCH, 0),
+        (UNIX_EPOCH + Duration::from_millis(999), 0),
+        (UNIX_EPOCH - Duration::from_millis(1), u32::MAX),
+        (UNIX_EPOCH - Duration::from_secs(1), u32::MAX),
+        (
+            UNIX_EPOCH + Duration::from_secs(u64::from(u32::MAX)),
+            u32::MAX,
+        ),
+        (UNIX_EPOCH + Duration::from_secs(u64::from(u32::MAX) + 1), 0),
+    ] {
+        file.set_times(fs::FileTimes::new().set_modified(timestamp))
+            .unwrap();
+        let attrs = FileAttributes::from(&file.metadata().unwrap());
+        assert_eq!(attrs.mtime, Some(expected), "{timestamp:?}");
+    }
+}
+
+#[test]
+fn sftp_longname_retains_utc_calendar_format() {
+    use russh_sftp::protocol::{File, FileAttributes};
+    for (mtime, expected) in [
+        (None, "Jan 01 1970 00:00"),
+        (Some(1_709_227_800), "Feb 29 2024 17:30"),
+        (Some(u32::MAX), "Feb 07 2106 06:28"),
+    ] {
+        let file = File::new(
+            "example",
+            FileAttributes {
+                mtime,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            file.longname,
+            format!("---------- 0 0 0 0 {expected} example")
+        );
+    }
 }
 
 #[test]

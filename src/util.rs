@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use chrono::{DateTime, Local};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use time::{OffsetDateTime, UtcOffset, format_description::FormatItem, macros::format_description};
 
 /// A name from an input field or remote server must stay inside its destination.
 pub fn valid_filename(name: &str) -> bool {
@@ -67,8 +69,41 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-pub fn format_date(dt: &DateTime<Local>) -> String {
-    dt.format("%m-%d %H:%M").to_string()
+pub fn format_date(dt: &SystemTime) -> String {
+    format_local_time(*dt, format_description!("[month]-[day] [hour]:[minute]"))
+}
+
+pub(crate) fn format_log_time(at: SystemTime, milliseconds: bool) -> String {
+    let description = if milliseconds {
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]")
+    } else {
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second]")
+    };
+    format_local_time(at, description)
+}
+
+fn format_local_time(at: SystemTime, description: &[FormatItem<'_>]) -> String {
+    // Keep timestamps in std until presentation. Preserve subsecond precision and
+    // dates before 1970 without unchecked calendar conversions.
+    let nanos = match at.duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i128,
+        Err(error) => -(error.duration().as_nanos() as i128),
+    };
+    let Ok(utc) = OffsetDateTime::from_unix_timestamp_nanos(nanos) else {
+        return "?".into();
+    };
+    let local = UtcOffset::local_offset_at(utc)
+        .ok()
+        .and_then(|offset| utc.checked_to_offset(offset));
+    let (datetime, suffix) = match local {
+        Some(datetime) => (datetime, ""),
+        // An unavailable system timezone must not silently look like local time.
+        None => (utc, " UTC"),
+    };
+    match datetime.format(description) {
+        Ok(value) => value + suffix,
+        Err(_) => "?".into(),
+    }
 }
 
 /// Return true if the file at `path` appears to be a text file that can be
@@ -187,4 +222,33 @@ pub fn find_sevenzip() -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn log_timestamps_preserve_milliseconds_on_both_sides_of_epoch() {
+        for (timestamp, fraction) in [
+            (UNIX_EPOCH + Duration::from_millis(123), ".123"),
+            (UNIX_EPOCH - Duration::from_millis(1), ".999"),
+        ] {
+            let precise = format_log_time(timestamp, true);
+            let seconds = format_log_time(timestamp, false);
+            let precise = precise.strip_suffix(" UTC").unwrap_or(&precise);
+            let seconds = seconds.strip_suffix(" UTC").unwrap_or(&seconds);
+            assert_eq!(precise, format!("{seconds}{fraction}"));
+            assert_eq!(seconds.len(), 19);
+        }
+    }
+
+    #[test]
+    fn extreme_file_dates_do_not_panic_during_local_conversion() {
+        let last_second = UNIX_EPOCH + Duration::from_secs(253_402_300_799);
+        assert_ne!(format_date(&last_second), "?");
+        let outside_calendar = last_second + Duration::from_secs(1);
+        assert_eq!(format_date(&outside_calendar), "?");
+    }
 }

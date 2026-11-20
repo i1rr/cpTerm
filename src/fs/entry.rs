@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -8,7 +8,7 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub is_dir: bool,
     pub size: u64,
-    pub modified: Option<DateTime<Local>>,
+    pub modified: Option<SystemTime>,
     pub is_hidden: bool,
 }
 
@@ -32,7 +32,7 @@ impl FileEntry {
             meta.file_attributes() & 0x2 != 0 // FILE_ATTRIBUTE_HIDDEN
         };
 
-        let modified = meta.modified().ok().map(DateTime::<Local>::from);
+        let modified = meta.modified().ok();
 
         Some(Self {
             name,

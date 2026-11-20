@@ -85,7 +85,7 @@ fn append_line_to_file(path: &PathBuf, level: Level, message: &str) -> std::io::
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let now = crate::util::format_log_time(std::time::SystemTime::now(), true);
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -152,7 +152,7 @@ fn write_to_file(path: &PathBuf, new_entries: &VecDeque<LogEntry>) -> std::io::R
         .collect();
 
     // Append new entries with timestamp
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = crate::util::format_log_time(std::time::SystemTime::now(), false);
     for entry in new_entries {
         lines.push(format!("{} {}: {}", now, entry.level, entry.message));
     }

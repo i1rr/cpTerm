@@ -29,6 +29,11 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         Path("Cargo.toml").write_text('[package]\nversion = "1.2.3"\n', encoding="utf-8")
         Path("README.md").write_text("Test instructions", encoding="utf-8")
+        Path("vendor/example").mkdir(parents=True)
+        Path("vendor/example/LICENSE").write_text("Test license", encoding="utf-8")
+        Path("vendor/provenance.json").write_text(json.dumps({
+            "example": {"version": "1.0.0", "path": "vendor/example", "archive": "https://example.test"}
+        }), encoding="utf-8")
 
     def archives(self):
         Path("dist").mkdir()
@@ -52,12 +57,14 @@ class ReleaseTests(unittest.TestCase):
                 archive_path = Path("dist", name)
                 if name.endswith(".zip"):
                     with zipfile.ZipFile(archive_path) as archive:
-                        self.assertEqual(set(archive.namelist()), {binary_name, "README.md", "BUILD.json"})
+                        self.assertEqual(set(archive.namelist()), {binary_name, "README.md", "BUILD.json", "VENDORED-NOTICES.txt"})
+                        self.assertIn(b"Test license", archive.read("VENDORED-NOTICES.txt"))
                         self.assertEqual(archive.read(binary_name), b"native binary")
                         metadata = json.loads(archive.read("BUILD.json"))
                 else:
                     with tarfile.open(archive_path) as archive:
-                        self.assertEqual(set(archive.getnames()), {binary_name, "README.md", "BUILD.json"})
+                        self.assertEqual(set(archive.getnames()), {binary_name, "README.md", "BUILD.json", "VENDORED-NOTICES.txt"})
+                        self.assertIn(b"Test license", archive.extractfile("VENDORED-NOTICES.txt").read())
                         self.assertEqual(archive.getmember(binary_name).mode, 0o755)
                         self.assertEqual(archive.extractfile(binary_name).read(), b"native binary")
                         metadata = json.load(archive.extractfile("BUILD.json"))
