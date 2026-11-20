@@ -1,0 +1,31 @@
+[
+  {
+    "crate": "libssh2-sys",
+    "crate_version": "0.3.4",
+    "crate_checksum": "fce5a0b125f6aeac93b304b35f7f1e9f054aad29ddac57091928e41df3ccd233",
+    "name": "libssh2",
+    "version": "1.11.2_DEV",
+    "repository": "https://github.com/libssh2/libssh2",
+    "commit": "a210464622240e589543ca848186decda225e3fa"
+  },
+  {
+    "crate": "openssl-sys",
+    "crate_version": "0.9.118",
+    "crate_checksum": "19c413d6ec9ebaf5e1c829d355cb3e9f783778d700f135be0921d52fce3c60ae",
+    "name": "LibreSSL",
+    "version": "4.4.1",
+    "repository": "https://github.com/libressl/portable",
+    "commit": "c4a8f5f86d15b08eb2f5dfb2aa44e90a0c1f6a3d",
+    "archive": "https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.4.1.tar.gz",
+    "archive_sha256": "290cdf1b53c086255dc302f118b98602a444e9ae6d11e9bfdd8c9b1b60aa3a22"
+  },
+  {
+    "crate": "libz-sys",
+    "crate_version": "1.1.33",
+    "crate_checksum": "fee3f59f4321dab0c78d828942e7aa09d0bd8ad6e78a501977e6bf3d02938045",
+    "name": "zlib",
+    "version": "1.4",
+    "repository": "https://github.com/madler/zlib",
+    "commit": "99623ef7097352da7993ba614161fd6a311e046e"
+  }
+]

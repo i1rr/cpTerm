@@ -24,6 +24,11 @@ credentials or access that you do not have.
   cooldown in `.cargo/config.toml`. Review dependency changes before adopting
   them; override the cooldown only for a targeted urgent security fix, document
   the reason, and rerun the advisory audit. Do not make blanket exceptions.
+- SSH uses upstream `ssh2`/libssh2 and an unmodified LibreSSL release, with no
+  private dependency patches. Review native source revisions and licenses in
+  `.github/scripts/native_sources.json` when changing native bindings. Use
+  `.github/scripts/build_crypto.py --cargo ...` for local Cargo checks; it
+  prepares the pinned SDK and applies the same static-link settings as CI.
 
 ## Project map
 
@@ -71,10 +76,9 @@ python3 .github/scripts/audit_lock.py
 ```
 
 The audit uses Python 3.11+ and sends public crate names and versions to OSV.
-All advisories block releases without exceptions. `chrono` must remain absent
-from the complete lockfile. Two private SSH patches in `vendor/` remove upstream
-requirements; review their provenance and source hashes when updating them.
-The audit verifies patched files and includes their original package identities.
+All advisories block releases without exceptions. `chrono`, the older vendored
+OpenSSL bundle `openssl-src`, and private Cargo patches must remain absent.
+The audit includes native source commits as well as registry package versions.
 CI also opens the real binary in a terminal and runs the loopback SSH test on
 Linux. Confirm the final push passes on Linux, macOS and Windows. Commit messages
 use lowercase imperative subjects; avoid em dashes in text and commits.

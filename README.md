@@ -57,12 +57,14 @@ SSH and some archive formats still need the system tools described below.
 
 ## Build from source
 
-Requires current Rust stable (minimum 1.100.0) and a 256-color terminal.
+Requires current Rust stable (minimum 1.100.0), Python 3.12+, CMake 3.16.4+,
+a C compiler and a 256-color terminal. Windows source builds need Visual Studio
+C++ tools. These build tools are not needed for the ready-to-run downloads.
 The project uses the Rust 2024 language edition, which is the latest edition;
 the edition year is separate from the compiler version. CI tests current stable Rust.
 
 ```sh
-cargo build --release --locked
+python3 .github/scripts/build_crypto.py --cargo build --release --locked
 ```
 
 ## Automated releases
@@ -100,10 +102,13 @@ CI checks every locked dependency against OSV on every push, pull request
 and daily scheduled audit. All advisories block releases without exceptions.
 `chrono` is absent from the complete dependency tree. File timestamps use
 `std::time`; the existing `time` dependency handles local calendar formatting.
-Two narrow [reviewed SSH patches](vendor/README.md) remove transitive `chrono`
-requirements. Their source hashes are checked and their original names and
-versions remain included in advisory scans. A clean advisory scan cannot
-establish that a package is free from unknown vulnerabilities or malicious code.
+SSH/SFTP uses the upstream `ssh2` and libssh2 libraries without private forks.
+The build helper downloads a hash-verified, unmodified LibreSSL release and
+links it statically. Native libssh2, LibreSSL and zlib source revisions are
+recorded in `.github/scripts/native_sources.json` and checked against OSV too;
+native binding updates require a source review. The older `openssl-src` bundle
+and private Cargo patches are rejected by the audit. A clean advisory scan
+cannot establish that a package is free from unknown vulnerabilities or malicious code.
 
 ## Usage
 

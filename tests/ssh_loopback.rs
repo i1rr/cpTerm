@@ -1,21 +1,27 @@
 //! Run via .github/scripts/test-sftp.sh, never against a user's SSH configuration.
 
+use cpt::ssh::SshSession;
 use cpt::ssh::session::upload_from;
-use russh_sftp::client::SftpSession;
 use std::{fs, path::Path, time::Duration};
 use tokio::io::AsyncWriteExt;
 
+#[derive(Clone, Copy)]
+enum StopUpload {
+    Disconnect,
+    Conflict,
+    Cancel,
+}
+
 // Keep the input open until we can see bytes on the server. This deterministically
 // interrupts a transfer before publication, independently of network speed.
-async fn interrupt_or_conflict(sftp: &SftpSession, dir: &Path, dest: &str, disconnect: bool) {
+async fn interrupt_or_conflict(session: &SshSession, dir: &Path, dest: &str, stop: StopUpload) {
     let before: std::collections::HashSet<_> = fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().path())
         .collect();
     let (mut input, source) = tokio::io::duplex(65536);
     input.write_all(&[42; 32768]).await.unwrap();
-    let upload = upload_from(sftp, source, dest);
-    tokio::pin!(upload);
+    let mut upload = Box::pin(upload_from(session, source, dest));
     let observe = async {
         loop {
             let stage = fs::read_dir(dir).unwrap().filter_map(Result::ok).find(|e| {
@@ -35,8 +41,20 @@ async fn interrupt_or_conflict(sftp: &SftpSession, dir: &Path, dest: &str, disco
     };
     let final_path = dir.join("retry.bin");
     assert!(!final_path.exists());
-    if disconnect {
-        sftp.close().await.unwrap();
+    if matches!(stop, StopUpload::Cancel) {
+        drop(upload);
+        tokio::time::timeout(Duration::from_secs(25), async {
+            while stage.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancelled upload did not clean up its staging file");
+        assert!(!final_path.exists());
+        return;
+    }
+    if matches!(stop, StopUpload::Disconnect) {
+        session.disconnect().unwrap();
     } else {
         fs::write(&final_path, b"arrived later").unwrap();
     }
@@ -47,7 +65,7 @@ async fn interrupt_or_conflict(sftp: &SftpSession, dir: &Path, dest: &str, disco
             .unwrap()
             .is_err()
     );
-    if disconnect {
+    if matches!(stop, StopUpload::Disconnect) {
         assert!(!final_path.exists());
     } else {
         assert_eq!(fs::read(&final_path).unwrap(), b"arrived later");
@@ -56,34 +74,12 @@ async fn interrupt_or_conflict(sftp: &SftpSession, dir: &Path, dest: &str, disco
     }
 }
 
-async fn verify_retry(sftp: &SftpSession, dir: &Path, dest: &str) {
-    interrupt_or_conflict(sftp, dir, dest, false).await;
-    upload_from(sftp, &b"complete retry"[..], dest)
+async fn verify_retry(session: &SshSession, dir: &Path, dest: &str) {
+    interrupt_or_conflict(session, dir, dest, StopUpload::Conflict).await;
+    upload_from(session, &b"complete retry"[..], dest)
         .await
         .unwrap();
     assert_eq!(fs::read(dir.join("retry.bin")).unwrap(), b"complete retry");
-}
-
-#[tokio::test]
-#[ignore = "requires CPT_TEST_SFTP_SERVER pointing to an OpenSSH sftp-server executable"]
-async fn standalone_sftp_interruption_and_retry() {
-    let dir = tempfile::tempdir().unwrap();
-    let program = std::env::var_os("CPT_TEST_SFTP_SERVER").unwrap();
-    let start = || async {
-        let mut child = tokio::process::Command::new(&program)
-            .current_dir(dir.path())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let stream = tokio::io::join(child.stdout.take().unwrap(), child.stdin.take().unwrap());
-        (SftpSession::new(stream).await.unwrap(), child)
-    };
-    let (sftp, _child) = start().await;
-    interrupt_or_conflict(&sftp, dir.path(), "retry.bin", true).await;
-    let (sftp, _retry_child) = start().await;
-    verify_retry(&sftp, dir.path(), "retry.bin").await;
 }
 
 #[tokio::test]
@@ -130,6 +126,21 @@ async fn verify_host_before_auth_and_transfer_without_overwrite() {
             .contains("Untrusted SSH host key")
     );
     fs::write(&pins, pin("host.pub")).unwrap();
+    let password_user = std::env::var("CPT_SSH_PASSWORD_USER").unwrap();
+    let password = std::env::var("CPT_SSH_PASSWORD").unwrap();
+    let rejected = SshSession::connect(
+        "127.0.0.1",
+        port,
+        &password_user,
+        Some("incorrect fixture password"),
+    )
+    .await
+    .unwrap_err();
+    assert!(rejected.contains("Authentication failed"));
+    let password_session = SshSession::connect("127.0.0.1", port, &password_user, Some(&password))
+        .await
+        .unwrap();
+    drop(password_session);
     let session = connect().await.unwrap();
     let remote = fixture.join("remote").join("contents");
     let remote = remote.to_str().unwrap();
@@ -158,7 +169,66 @@ async fn verify_host_before_auth_and_transfer_without_overwrite() {
     let remote_dir = fixture.join("remote");
     let retry = remote_dir.join("retry.bin");
     let retry = retry.to_str().unwrap();
-    interrupt_or_conflict(&session.sftp, &remote_dir, retry, true).await;
+    interrupt_or_conflict(&session, &remote_dir, retry, StopUpload::Disconnect).await;
     let reconnected = connect().await.unwrap();
-    verify_retry(&reconnected.sftp, &remote_dir, retry).await;
+    verify_retry(&reconnected, &remote_dir, retry).await;
+    fs::remove_file(retry).unwrap();
+    interrupt_or_conflict(&reconnected, &remote_dir, retry, StopUpload::Cancel).await;
+
+    // An erroring async producer must wake the native worker, clean up, and
+    // leave no published file. It must not be mistaken for a successful EOF.
+    struct FailedInput;
+    impl tokio::io::AsyncRead for FailedInput {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("injected input failure")))
+        }
+    }
+    let failed = remote_dir.join("failed-input");
+    let before: std::collections::HashSet<_> = fs::read_dir(&remote_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(25),
+            upload_from(&reconnected, FailedInput, failed.to_str().unwrap())
+        )
+        .await
+        .unwrap()
+        .is_err()
+    );
+    let after: std::collections::HashSet<_> = fs::read_dir(&remote_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(before, after);
+
+    let tree = remote_dir.join("tree");
+    let child = tree.join("child");
+    reconnected.mkdir(tree.to_str().unwrap()).await.unwrap();
+    reconnected.mkdir(child.to_str().unwrap()).await.unwrap();
+    let file = child.join("file");
+    reconnected
+        .upload(&source, file.to_str().unwrap())
+        .await
+        .unwrap();
+    let listed = reconnected.list_dir(child.to_str().unwrap()).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].size, 2 * 1024 * 1024);
+    assert!(listed[0].modified.is_some());
+    let renamed = child.join("renamed");
+    reconnected
+        .rename(file.to_str().unwrap(), renamed.to_str().unwrap())
+        .await
+        .unwrap();
+    assert!(renamed.exists() && !file.exists());
+    reconnected
+        .remove_dir_recursive(tree.to_str().unwrap())
+        .await
+        .unwrap();
+    assert!(!tree.exists());
 }

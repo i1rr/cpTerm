@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
+#[cfg(unix)]
+use std::time::{Duration, UNIX_EPOCH};
 
 use cpt::action::Action;
 use cpt::components::dialog::{Dialog, DialogKind};
@@ -182,52 +184,6 @@ fn format_date_observes_historical_dst_and_pre_epoch_dates() {
         format_date(&(UNIX_EPOCH + Duration::from_secs(1_709_227_800))),
         "02-29 12:30"
     );
-}
-
-#[test]
-fn sftp_timestamps_preserve_epoch_flooring_and_wire_wrapping() {
-    use russh_sftp::protocol::FileAttributes;
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("timestamp");
-    let file = fs::File::create(&path).unwrap();
-    for (timestamp, expected) in [
-        (UNIX_EPOCH, 0),
-        (UNIX_EPOCH + Duration::from_millis(999), 0),
-        (UNIX_EPOCH - Duration::from_millis(1), u32::MAX),
-        (UNIX_EPOCH - Duration::from_secs(1), u32::MAX),
-        (
-            UNIX_EPOCH + Duration::from_secs(u64::from(u32::MAX)),
-            u32::MAX,
-        ),
-        (UNIX_EPOCH + Duration::from_secs(u64::from(u32::MAX) + 1), 0),
-    ] {
-        file.set_times(fs::FileTimes::new().set_modified(timestamp))
-            .unwrap();
-        let attrs = FileAttributes::from(&file.metadata().unwrap());
-        assert_eq!(attrs.mtime, Some(expected), "{timestamp:?}");
-    }
-}
-
-#[test]
-fn sftp_longname_retains_utc_calendar_format() {
-    use russh_sftp::protocol::{File, FileAttributes};
-    for (mtime, expected) in [
-        (None, "Jan 01 1970 00:00"),
-        (Some(1_709_227_800), "Feb 29 2024 17:30"),
-        (Some(u32::MAX), "Feb 07 2106 06:28"),
-    ] {
-        let file = File::new(
-            "example",
-            FileAttributes {
-                mtime,
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            file.longname,
-            format!("---------- 0 0 0 0 {expected} example")
-        );
-    }
 }
 
 #[test]
