@@ -136,7 +136,7 @@ fn format_size_covers_unit_boundaries() {
 fn format_date_produces_expected_pattern() {
     let dt = SystemTime::now();
     let result = format_date(&dt);
-    assert!(result.len() == 11 || result.ends_with(" UTC"));
+    assert!(result.len() == 11 || (result.len() == 12 && result.ends_with('Z')));
     assert_eq!(result.as_bytes()[2], b'-');
     assert_eq!(result.as_bytes()[5], b' ');
     assert_eq!(result.as_bytes()[8], b':');

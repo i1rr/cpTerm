@@ -70,7 +70,12 @@ pub fn format_size(bytes: u64) -> String {
 }
 
 pub fn format_date(dt: &SystemTime) -> String {
-    format_local_time(*dt, format_description!("[month]-[day] [hour]:[minute]"))
+    // The date column is 12 cells wide, including the UTC fallback marker.
+    format_local_time(
+        *dt,
+        format_description!("[month]-[day] [hour]:[minute]"),
+        "Z",
+    )
 }
 
 pub(crate) fn format_log_time(at: SystemTime, milliseconds: bool) -> String {
@@ -79,10 +84,10 @@ pub(crate) fn format_log_time(at: SystemTime, milliseconds: bool) -> String {
     } else {
         format_description!("[year]-[month]-[day] [hour]:[minute]:[second]")
     };
-    format_local_time(at, description)
+    format_local_time(at, description, " UTC")
 }
 
-fn format_local_time(at: SystemTime, description: &[FormatItem<'_>]) -> String {
+fn format_local_time(at: SystemTime, description: &[FormatItem<'_>], utc_suffix: &str) -> String {
     // Keep timestamps in std until presentation. Preserve subsecond precision and
     // dates before 1970 without unchecked calendar conversions.
     let nanos = match at.duration_since(UNIX_EPOCH) {
@@ -98,7 +103,7 @@ fn format_local_time(at: SystemTime, description: &[FormatItem<'_>]) -> String {
     let (datetime, suffix) = match local {
         Some(datetime) => (datetime, ""),
         // An unavailable system timezone must not silently look like local time.
-        None => (utc, " UTC"),
+        None => (utc, utc_suffix),
     };
     match datetime.format(description) {
         Ok(value) => value + suffix,
@@ -247,7 +252,12 @@ mod timestamp_tests {
     #[test]
     fn extreme_file_dates_do_not_panic_during_local_conversion() {
         let last_second = UNIX_EPOCH + Duration::from_secs(253_402_300_799);
-        assert_ne!(format_date(&last_second), "?");
+        let rendered = format_date(&last_second);
+        assert_ne!(rendered, "?");
+        assert!(
+            rendered.len() <= 12,
+            "date and timezone marker must fit the column"
+        );
         let outside_calendar = last_second + Duration::from_secs(1);
         assert_eq!(format_date(&outside_calendar), "?");
     }
