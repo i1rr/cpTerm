@@ -16,7 +16,7 @@ cleanup() {
     fi
     # The password account can create private cache files under its test home.
     # Keep privileged deletion confined to the directory made above.
-    if [[ "$fixture" == /tmp/cpt-sftp.* && "$fixture" != */*/* ]]; then
+    if [[ "$fixture" =~ ^/tmp/cpt-sftp\.[[:alnum:]]{8}$ ]]; then
         sudo rm -rf -- "$fixture"
     else
         echo 'Refusing to remove an unexpected fixture path' >&2
